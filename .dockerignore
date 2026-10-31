@@ -1,0 +1,9 @@
+.venv
+.rustup
+.cargo
+rust-kernel/target
+backend/data
+backend/tests
+**/__pycache__
+*.db
+.git

@@ -1,0 +1,15 @@
+# Render Blueprint - deploy: connect this repo in Render, it reads this file.
+# Free plan notes: 512 MB RAM, spins down after 15 min idle (~1 min wake),
+# ephemeral filesystem (tenant data resets on redeploy - fine for a demo).
+services:
+  - type: web
+    name: autocash
+    runtime: docker
+    plan: free
+    envVars:
+      - key: AUTOCASH_BOOTSTRAP_KEY
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false   # set manually in the dashboard, or leave unset for deterministic mode
+      - key: AUTOCASH_RATE_LIMIT_PER_MIN
+        value: "300"

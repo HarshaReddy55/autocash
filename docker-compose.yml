@@ -1,0 +1,11 @@
+services:
+  autocash:
+    build: .
+    ports: ["8080:8080"]
+    environment:
+      AUTOCASH_BOOTSTRAP_KEY: "${AUTOCASH_BOOTSTRAP_KEY:?set a strong bootstrap key}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      AUTOCASH_RATE_LIMIT_PER_MIN: "${AUTOCASH_RATE_LIMIT_PER_MIN:-300}"
+    volumes: ["autocash-data:/app/data"]
+volumes:
+  autocash-data:
