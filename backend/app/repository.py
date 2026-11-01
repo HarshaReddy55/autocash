@@ -43,12 +43,23 @@ class Repository:
         self._lock = threading.Lock()
         self._local = threading.local()
         conn = self.conn  # the creating thread's connection; builds the schema
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(SCHEMA)
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(payments)").fetchall()]
-        if "references_json" not in cols:
-            conn.execute("ALTER TABLE payments ADD COLUMN references_json TEXT DEFAULT '[]'")
-        conn.commit()
+        # Retry the schema build briefly: another process opening the
+        # same fresh database at the same moment can hold the write lock
+        # for a few milliseconds, and a cold start must never fail on it.
+        import time as _time
+        for attempt in range(10):
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.executescript(SCHEMA)
+                cols = [r[1] for r in conn.execute("PRAGMA table_info(payments)").fetchall()]
+                if "references_json" not in cols:
+                    conn.execute("ALTER TABLE payments ADD COLUMN references_json TEXT DEFAULT '[]'")
+                conn.commit()
+                break
+            except sqlite3.OperationalError:
+                if attempt == 9:
+                    raise
+                _time.sleep(0.05 * (attempt + 1))
 
     @property
     def conn(self):

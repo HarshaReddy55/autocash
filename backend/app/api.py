@@ -37,10 +37,23 @@ def _now_iso():
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
+import threading as _repos_threading
+_repos_lock = _repos_threading.Lock()
+
 def repo_for(tenant_id):
-    if tenant_id not in _repos:
-        _repos[tenant_id] = Repository(store.db_path(tenant_id))
-    return _repos[tenant_id]
+    # Locked lazy creation: two threads meeting a cold tenant at the same
+    # moment must not both run the repository's schema build against the
+    # same new database file (the loser can fail with 'database is
+    # locked' and surface a 500). Every new browser session is a cold
+    # tenant in the public demo, so this race is on the hot path.
+    repo = _repos.get(tenant_id)
+    if repo is None:
+        with _repos_lock:
+            repo = _repos.get(tenant_id)
+            if repo is None:
+                repo = Repository(store.db_path(tenant_id))
+                _repos[tenant_id] = repo
+    return repo
 
 from fastapi import Header, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
