@@ -4,7 +4,7 @@
 
 [![Build and push image to Amazon ECR](https://github.com/HarshaReddy55/autocash/actions/workflows/build-ecr.yml/badge.svg)](https://github.com/HarshaReddy55/autocash/actions/workflows/build-ecr.yml)
 The badge is the test gate: the workflow runs the full pytest suite
-(64 tests) and `cargo test` for the Rust kernel before any image is
+(66 tests) and `cargo test` for the Rust kernel before any image is
 built, and the build job does not run unless both pass.
 
 AutoCash matches incoming payments to open invoices autonomously,
@@ -84,7 +84,7 @@ Docker: `docker build -t autocash .` then run with AUTOCASH_BOOTSTRAP_KEY set
   .github/workflows/build-ecr.yml -> ECR -> ECS Express.
 
 ## Verification
-    .venv/bin/python -m pytest backend/tests/ -q     # 64 tests, 19 modules
+    .venv/bin/python -m pytest backend/tests/ -q     # 66 tests, 20 modules
     cd rust-kernel && cargo test                     # 4 tests
 Both run in GitHub Actions before every image build (see the badge).
 All metrics quoted in docs are computed on labelled synthetic seed data and

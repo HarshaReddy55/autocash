@@ -255,13 +255,33 @@ tr.hlrow td{background:rgba(61,117,232,.28)!important;transition:background 1.2s
 .speccard.open{display:block}
 .specwrap:hover .speccard,.specwrap:focus-within .speccard{display:block}
 /* ---------- case bar: the one shared workspace, visible on every view ---------- */
-.casebar{display:flex;align-items:stretch;gap:0;background:var(--panel2);border:1px solid var(--line);margin:0 0 18px;flex-wrap:wrap;position:relative;z-index:6}
-.casebar .cc{padding:10px 16px;border-left:1px solid var(--line);min-width:128px}
-.casebar .cc:first-child{border-left:0;min-width:230px;flex:1}
-.casebar .k{font-family:var(--mono);font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
-.casebar .v{font-size:14.5px;font-weight:650;color:#fff;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.casebar .v small{color:var(--mut);font-weight:500;font-size:11.5px}
-.casebar .acts{margin-left:auto;display:flex;gap:8px;align-items:center;padding:10px 14px;border-left:1px solid var(--line);flex-wrap:wrap}
+.casebar{display:flex;align-items:stretch;gap:0;background:var(--panel2);border:1px solid var(--line);margin:0 0 12px;flex-wrap:wrap;position:relative;z-index:6}
+.casebar .cc{padding:5px 12px;border-left:1px solid var(--line);min-width:0}
+.casebar .cc:not(:first-child){flex:0 1 auto;max-width:172px}
+.casebar .cc:first-child{border-left:0;min-width:150px;flex:1 1 200px;max-width:300px}
+.casebar #cb-switch{max-width:150px}
+.casebar select{width:auto;padding:5px 8px;font-size:12px;height:30px}
+.casebar .btn.small{height:30px;white-space:nowrap}
+.casebar .acts{flex-wrap:nowrap}
+.casebar .btn.small{padding:5px 9px}
+.casebar .k{font-family:var(--mono);font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
+.casebar .v{font-size:13px;font-weight:650;color:#fff;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.casebar .v small{color:var(--mut);font-weight:500;font-size:11px}
+.casebar .acts{margin-left:auto;display:flex;gap:6px;align-items:center;padding:5px 10px;border-left:1px solid var(--line);flex-wrap:nowrap}
+.briefpanel{animation:none}
+.briefhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}
+.briefpanel.mini{padding-top:12px;padding-bottom:12px}
+.briefpanel.mini .briefhead{margin-bottom:6px}
+.briefmini{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.bm-verdict{font-size:13.5px;line-height:1.5;flex:1;min-width:230px}
+.btile{display:flex;flex-direction:column;gap:1px}
+.btile .bk{font-family:var(--mono);font-size:9px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em}
+.btile .bv{font-size:17px;font-weight:700;color:#fff;white-space:nowrap}
+@media(min-width:1150px){.casebar{flex-wrap:nowrap}}
+.actsmenu{position:relative;display:inline-block}
+.actsmenu .menu{position:absolute;right:0;top:calc(100% + 6px);background:#0d1117;border:1px solid var(--line);padding:6px;display:none;flex-direction:column;gap:4px;z-index:95;min-width:180px;box-shadow:0 12px 32px rgba(0,0,0,.5)}
+.actsmenu.open .menu{display:flex}
+.actsmenu .menu .btn{text-align:left;width:100%}
 .casebar .livedot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:6px;animation:pulse 2.2s infinite;vertical-align:1px}
 .staged-t td small{color:var(--mut)}
 body.lens-off .jdnote{display:none}
@@ -269,16 +289,26 @@ body.lens-off .jdnote{display:none}
 .casebar .cc:first-child{flex:1 1 auto;min-width:160px}
 #cb-switch{max-width:215px}
 @media(min-width:1150px){
-  .topbar{position:fixed;top:0;left:0;bottom:0;width:212px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;border-bottom:0;border-right:1px solid var(--line)}
-  .bar1{flex-direction:column;align-items:flex-start;gap:12px;padding:16px 16px 10px}
+  .topbar{position:fixed;top:0;left:0;bottom:0;width:212px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;border-bottom:0;border-right:1px solid var(--line);padding-bottom:86px}
+  .bar1{flex-direction:column;align-items:stretch;gap:12px;padding:16px 16px 4px;width:100%}
   .bar1 .brand h1{font-size:23px}
-  .bar1 .brand .sub{max-width:150px;line-height:1.5}
-  .bar1r{display:flex;flex-direction:column;align-items:flex-start;gap:5px}
-  #lens-btn,#docs-btn{margin:0 0 4px}
-  #cmdk-btn{position:static}
-  .navrow{flex-direction:column;align-items:stretch;overflow:visible;padding:6px 10px 16px;gap:2px}
+  .bar1 .brand .sub{max-width:178px;line-height:1.5}
+  .bar1r{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%}
+  .bar1r .tenantsel{display:flex;flex-direction:column;gap:4px;margin:0}
+  .bar1r .tenantsel select{width:100%;margin-left:0}
+  .bar1r .sesschip{display:block;margin:0}
+  #lens-btn,#docs-btn{margin:0;width:100%;text-align:left}
+  #cmdk-btn{position:static;width:100%;display:flex;align-items:center;gap:9px;border:1px solid var(--line2);border-radius:999px;padding:6px 12px;color:var(--mut);background:transparent;cursor:pointer}
+  #cmdk-btn::after{content:"MENU";font:600 10.5px var(--mono);letter-spacing:.08em}
+  #cmdk-btn:hover{color:#fff;border-color:var(--blue)}
+  .builtby{position:absolute;left:16px;right:16px;bottom:12px;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:2px;text-align:left}
+  .builtby .ck{font:600 9.5px var(--mono);letter-spacing:.1em;color:var(--mut)}
+  .builtby b{font-size:12.5px;color:#fff}
+  .builtby .cs{font-size:10.5px;color:var(--mut);line-height:1.45}
+  .navrow{flex-direction:column;align-items:stretch;overflow:visible;padding:2px 10px 16px;gap:2px}
   .navrow button{width:100%;text-align:left;justify-content:flex-start}
-  .navrow .grp{display:block;margin:13px 6px 4px}
+  .navrow .grp{display:block;margin:12px 6px 4px;border-top:1px solid var(--line);padding-top:10px}
+  .navrow .grp:first-child{border-top:0;padding-top:0;margin-top:6px}
   main{margin-left:212px;width:calc(100% - 212px)}
 }
 #lens-btn,#docs-btn{font:600 10.5px var(--mono);letter-spacing:.08em;background:transparent;color:var(--mut);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;cursor:pointer;margin-right:14px}

@@ -185,7 +185,7 @@ async function runLive(btn){
   const logLine=(html)=>{log.innerHTML+=`<div><span class="t">${stamp()}</span> ${html}</div>`; log.scrollTop=log.scrollHeight};
   const chip=(lane,i,state,label)=>{const c=lane.querySelectorAll(".chip")[i]; if(!c)return; c.className="chip "+state; if(label)c.innerHTML=label};
   try{
-    const res=await fetch("/api/v1/runs/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({use_workspace:true})});
+    const res=await fetch("/api/v1/runs/stream",{method:"POST",headers:authHeaders(),body:JSON.stringify({use_workspace:true})});
     if(!res.ok||!res.body) throw new Error("stream failed: "+res.status);
     const reader=res.body.getReader(), dec=new TextDecoder(); let buf="";
     while(true){

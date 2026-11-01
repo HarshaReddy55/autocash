@@ -5,10 +5,12 @@ const $=id=>document.getElementById(id);
 const money=c=>"$"+(c/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function sessionId(){let s=sessionStorage.getItem("autocash_session_id");if(!s){s=(crypto.randomUUID?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16)}));sessionStorage.setItem("autocash_session_id",s);}return s}
-async function api(path,opts={}){const tn=localStorage.getItem("ac-tenant")||"";const r=await fetch(path,{headers:{"Content-Type":"application/json","X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})},...opts});if(!r.ok){throw new Error((await r.text()).slice(0,300))}return r.json()}
+function authHeaders(){const tn=localStorage.getItem("ac-tenant")||"";return {"Content-Type":"application/json","X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})}}
+async function api(path,opts={}){const r=await fetch(path,{headers:authHeaders(),...opts});if(!r.ok){throw new Error((await r.text()).slice(0,300))}return r.json()}
+function toggleActsMenu(ev){ ev.stopPropagation(); const m=$("acts-menu"); const open=m.classList.toggle("open");
+  if(open){ const close=(e)=>{ if(!m.contains(e.target)){ m.classList.remove("open"); document.removeEventListener("click",close); } }; setTimeout(()=>document.addEventListener("click",close),0); } }
 async function downloadExport(path,fname){
-  try{ const tn=localStorage.getItem("ac-tenant")||"";
-    const r=await fetch(path,{headers:{"X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})}});
+  try{ const r=await fetch(path,{headers:authHeaders()});
     if(!r.ok) throw new Error("Export failed ("+r.status+") - run a case first, then export");
     const b=await r.blob(); const u=URL.createObjectURL(b); const a=document.createElement("a");
     a.href=u; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
@@ -17,7 +19,7 @@ async function downloadExport(path,fname){
   }catch(e){ toast(e.message) }
 }
 function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),3400)}
-function go(s){document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.s===s));document.querySelectorAll("main section").forEach(x=>x.classList.toggle("active",x.id===s));const ab=document.querySelector(".navrow button.active");if(ab)ab.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"});refreshWorkspace();if(LOADERS[s]){const p=LOADERS[s]();if(p&&p.then)p.then(()=>{fillInfo();initReveal()});else{fillInfo();initReveal()}}}
+function go(s){CURVIEW=s;BRIEF_OPEN=(s==="dash");applyBriefMode();document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.s===s));document.querySelectorAll("main section").forEach(x=>x.classList.toggle("active",x.id===s));const ab=document.querySelector(".navrow button.active");if(ab)ab.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"});refreshWorkspace();if(LOADERS[s]){const p=LOADERS[s]();if(p&&p.then)p.then(()=>{fillInfo();initReveal()});else{fillInfo();initReveal()}}}
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>go(b.dataset.s));
 document.addEventListener("click",()=>setTimeout(()=>{fillInfo();initReveal()},60));
 function toggleHow(s){$("how-"+s).classList.toggle("open")}
@@ -68,6 +70,29 @@ function openApprovals(){
   setTimeout(()=>{ const p=$("approvals-panel"); if(p){ p.scrollIntoView({behavior:"smooth",block:"start"}); p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash"); } },500);
 }
 let BRIEF_RUN=null, BRIEF_SEQ=0, BRIEF_PROMISE=null;
+/* Shutter brief: the Dashboard shows the full brief; every other view
+   shows a minimized strip (verdict + the three outcome boxes) with a
+   toggle that drops the full brief down when wanted. Switching views
+   resets to that view's default. */
+let CURVIEW="dash", BRIEF_OPEN=null;
+function briefEffectiveOpen(){ return BRIEF_OPEN===null ? CURVIEW==="dash" : BRIEF_OPEN }
+function applyBriefMode(){
+  const full=$("brief-full"), mini=$("brief-mini"), t=$("brief-toggle"), p=$("brief-panel");
+  if(!full||!mini||!t) return;
+  const open=briefEffectiveOpen();
+  full.style.display=open?"":"none"; mini.style.display=open?"none":"";
+  t.textContent=open?"Minimize ▴":"Full brief ▾";
+  if(p) p.classList.toggle("mini", !open);
+}
+function toggleBrief(){ BRIEF_OPEN=!briefEffectiveOpen(); applyBriefMode(); }
+function fillBriefMini(){
+  const m=$("brief-mini"); if(!m||!WS) return;
+  const lr=WS.latest_run;
+  if(!lr){ m.innerHTML=`<div class="briefmini"><span class="bm-verdict">Not run yet - run this case from Run Reconciliation and the outcome appears here.</span></div>`; return }
+  const d=(BRIEF_RUN&&BRIEF_RUN.run_id===lr.run_id)?BRIEF_RUN.data:null;
+  if(!d){ m.innerHTML=`<div class="briefmini"><span class="bm-verdict">Counting this run's outcomes...</span></div>`; return }
+  m.innerHTML=`<div class="briefmini"><span class="bm-verdict"><b>${esc(d.verdictShort)}</b></span><span class="btile"><span class="bk">Auto-posted cash</span><span class="bv">${money(d.cash)}</span></span><span class="btile"><span class="bk">Expected back from disputes</span><span class="bv">$${d.rec.toLocaleString("en-US",{maximumFractionDigits:0})}</span></span><span class="btile"><span class="bk">Held for a person</span><span class="bv">${d.held} - ${money(d.heldAmt)}</span></span></div>`;
+}
 async function briefOutcome(runId){
   if(BRIEF_RUN&&BRIEF_RUN.run_id===runId) return BRIEF_RUN.html;
   if(!BRIEF_PROMISE||BRIEF_PROMISE.run_id!==runId){
@@ -99,7 +124,8 @@ async function briefOutcome(runId){
         <div class="card"><div class="k">Expected back from disputes</div><div class="v">$${rec.toLocaleString("en-US",{maximumFractionDigits:0})}</div><div class="n">What the agent expects to win back from the claims it has opened</div></div>
         <div class="card"><div class="k">Held for a person</div><div class="v">${held}</div><div class="n">${money(heldAmt)} waiting - decide them from Approvals waiting in the top bar</div></div></div>
         <small>Totals for the whole case, across all of its runs - each payment counted once, by its latest decision. Time saved for the analyst: <b>${(auto*12/60).toFixed(1)} hours</b> (${auto} auto-posted payments x 12 minutes each, the stated manual benchmark).</small>`;
-      BRIEF_RUN={run_id:runId, html};
+      const verdictShort=`${total} payments in: ${auto} posted themselves, ${held} waiting for a person${stopped.length?`, ${stopped.length} stopped before matching`:""}.`;
+      BRIEF_RUN={run_id:runId, html, data:{verdictShort, cash, rec, held, heldAmt, auto}};
       return html;
     })()};
   }
@@ -121,15 +147,16 @@ function renderCaseBrief(){
   // no await stands between reading WS and writing, so no stale async
   // invocation can ever land last. The outcome fills its own container
   // when its fetch resolves, and only if that run is still the latest.
-  el.innerHTML=`<div class="panel" style="margin-bottom:18px"><h3>Case brief - ${esc(c.name)} <span data-info="impact"></span></h3><div class="grid2">
+  el.innerHTML=`<div class="panel briefpanel" id="brief-panel" style="margin-bottom:18px"><div class="briefhead"><h3 style="margin:0">Case brief - ${esc(c.name)} <span data-info="impact"></span></h3><button class="btn small ghost" id="brief-toggle" onclick="toggleBrief()"></button></div><div id="brief-mini"></div><div id="brief-full"><div class="grid2">
     <div><div class="k" style="font-family:var(--mono);font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em">The situation - what came in</div>
     <p style="margin:8px 0">${esc(story||"A working dataset loaded into the shared workspace.")}</p>
     ${shows?`<small><b>What this case tests:</b> ${esc(shows)}</small><br>`:""}
     <small>Open invoices in the ledger: <b>${WS.open_invoices}</b><br>Payments in this case: <b>${WS.staged_payments}</b>${WS.pending_payments.length===0?" - all of them have been run":WS.pending_payments.length===WS.staged_payments?" - all still waiting to run":` - <b>${WS.pending_payments.length}</b> of them still waiting to run`}${lr?`<br>The latest run processed <b>${lr.payments}</b> payments`:""}</small></div>
     <div><div class="k" style="font-family:var(--mono);font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em">The outcome - what the agent did</div><div id="cb-outcome" style="margin-top:8px">${outcomeHtml}</div></div>
-    </div></div>`;
+    </div></div></div>`;
+  fillBriefMini(); applyBriefMode();
   if(lr&&!cached){
-    briefOutcome(lr.run_id).then(html=>{ const t=$("cb-outcome"); if(t&&WS&&WS.latest_run&&WS.latest_run.run_id===lr.run_id) t.innerHTML=html; }).catch(()=>{});
+    briefOutcome(lr.run_id).then(html=>{ const t=$("cb-outcome"); if(t&&WS&&WS.latest_run&&WS.latest_run.run_id===lr.run_id){ t.innerHTML=html; fillBriefMini(); } }).catch(()=>{});
   }
 }
 function stagedTable(pays){

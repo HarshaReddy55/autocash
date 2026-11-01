@@ -49,7 +49,12 @@ function renderGradeFromResults(b){
 async function runWorkspaceBatch(btn){
   if(btn)btn.disabled=true;
   try{
-    const ws=await refreshWorkspace(); const pays=ws?ws.pending_payments:[];
+    const ws=await refreshWorkspace(); let pays=ws?ws.pending_payments:[];
+    if(!pays.length && ws && ws.staged_payments>0 && ws.all_payments && ws.all_payments.length){
+      // Already-run case: replay the full staged set, the same fallback
+      // the live stream applies, instead of reporting nothing to run.
+      pays=ws.all_payments; toast("This case already ran once - replaying all "+pays.length+" payments");
+    }
     if(!pays.length){ toast("Nothing staged to run - load a case or upload payments first"); return }
     const b=await api("/api/v1/batches",{method:"POST",body:JSON.stringify({idempotency_key:"ui-case-"+Date.now(),payments:pays})});
     lastRun=b; casePayments=pays; seedPayments=pays; renderRun(b);

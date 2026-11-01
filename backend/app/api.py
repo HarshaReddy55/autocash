@@ -165,6 +165,7 @@ def _workspace_state(repo):
     return {"case": repo.get_meta("active_case"),
             "open_invoices": len(repo.open_invoices()),
             "staged_payments": len(repo.all_payments()),
+            "all_payments": [asdict(p) for p in repo.all_payments()],
             "pending_payments": [asdict(p) for p in pending],
             "latest_run": runs[0] if runs else None,
             "approvals_pending": len(repo.list_proposed())}

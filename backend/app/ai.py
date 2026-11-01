@@ -4,7 +4,13 @@ Every AI feature has a deterministic fallback; degraded mode is explicit."""
 import os, re, json, time
 import httpx
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+# Google retires model names for new users over time (gemini-2.5-flash
+# returned 404 'no longer available to new users' on the live deployment
+# on 1 Nov 2026; Google's own error pointed at gemini-3.8-flash). The
+# model is therefore an environment setting, not a hard-coded string:
+# GEMINI_MODEL overrides it without a code change.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 PARSE_SCHEMA_HINT = ('Return ONLY JSON with keys: payer (string), amount_cents (int), '
                      'invoice_refs (list of strings), po_refs (list of strings), '
                      'deduction_cents (int), deduction_reason (string)')
