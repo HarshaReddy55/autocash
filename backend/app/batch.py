@@ -108,11 +108,14 @@ def run_batch(repo, payments, policy: Policy, idempotency_key, actor="system", o
                   "greedy_comparison": {"invoices": [l.invoice_id for l in _greedy.lines],
                                         "residual_cents": _greedy.residual_cents, "status": _greedy.status,
                                         "reading": "what the first-fit greedy baseline would have done with the same candidates"}}
+        ded = deduction_intelligence(pay, 100000, 40000, policy) if pay.claimed_deduction_cents else None
+        if ded: ded["payer"] = pay.payer_raw; ded["claimed_cents"] = pay.claimed_deduction_cents
         repo.add_match(match_id, run_id, pay.payment_id,
                        "AUTO_POSTED" if auto else "PROPOSED", res.solver, res.residual_cents,
                        res.confidence, {"lines": [asdict(l) for l in res.lines], "deduction_applied": res.deduction_applied,
                                         "matched_by": res.matched_by, "latency_ms": res.latency_ms,
                                         "decision_reason": decision_reason,
+                                        "status": status, "auto_posted": auto, "deduction": ded,
                                         "derivation": _deriv})
         if res.lines:
             used = {l.invoice_id for l in res.lines}
@@ -124,7 +127,6 @@ def run_batch(repo, payments, policy: Policy, idempotency_key, actor="system", o
                   "detail": {"residual_cents": res.residual_cents}}
             repo.add_exception(run_id, pay.payment_id, ex["kind"], ex["severity"], ex["recommended_action"], ex["detail"])
             exceptions.append(ex)
-        ded = deduction_intelligence(pay, 100000, 40000, policy) if pay.claimed_deduction_cents else None
         if ded:
             ev({"type": "deduction", "payment_id": pay.payment_id,
                 "decision": ded.get("autonomous_action"), "reason_code": ded.get("assigned_erp_reason_code"),

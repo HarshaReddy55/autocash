@@ -14,8 +14,10 @@ from ingestion import parse_invoices_csv, parse_payments_csv
 from scenarios import SCENARIOS, get_scenario
 from methodology import SECTIONS as METHODOLOGY
 from batch import run_batch
+from anomaly import payment_fingerprint
 from solvers import solve_milp, solve_greedy, why_not_invoice
 from ai import parse_remittance, GeminiClient
+from briefing import run_brief, draft_message
 from copilot import answer as copilot_answer
 from seed import seed_invoices, seed_payments, GROUND_TRUTH
 import ml as mlmod
@@ -104,8 +106,123 @@ def seed(ctx=Depends(auth_context)):
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
     invs = seed_invoices()
     for inv in invs: repo.add_invoice(inv)
-    return {"invoices": len(invs), "payments": [asdict(p) for p in seed_payments()],
+    pays = seed_payments()
+    for p in pays: repo.add_payment(p, payment_fingerprint(p))
+    if not repo.get_meta("active_case"):
+        repo.set_meta("active_case", {"id": "seed", "name": "Demo seed workspace", "source": "demo-seed",
+                                      "loaded_at": _now_iso(),
+                                      "expect": {pid: {"invoices": sorted(s)} for pid, s in GROUND_TRUTH.items()},
+                                      "expect_exceptions": {}})
+    return {"invoices": len(invs), "payments": [asdict(p) for p in pays],
             "note": "Synthetic labelled workspace for evaluation. Payments are returned for review, then submitted to /api/v1/batches."}
+
+def _workspace_state(repo):
+    """The one shared truth every view reads: the active case, what is staged,
+    what the latest run did, and what is waiting for a human."""
+    pending = repo.pending_payments()
+    runs = repo.list_runs(1)
+    return {"case": repo.get_meta("active_case"),
+            "open_invoices": len(repo.open_invoices()),
+            "staged_payments": len(repo.all_payments()),
+            "pending_payments": [asdict(p) for p in pending],
+            "latest_run": runs[0] if runs else None,
+            "approvals_pending": len(repo.list_proposed())}
+
+@app.get("/api/v1/workspace")
+def workspace(ctx=Depends(auth_context)):
+    need(ctx, "read"); return _workspace_state(repo_for(ctx["tenant_id"]))
+
+def _policy_for(repo, tenant_id, body_policy):
+    """Effective run policy: an explicit request body wins; otherwise the
+    tenant's stored policy, with the active use-case pack's grading override
+    (if any) applied on top."""
+    if body_policy: return Policy(**body_policy)
+    stored = store.get_policy(tenant_id)
+    base = dict(stored) if stored else {}
+    case = repo.get_meta("active_case") or {}
+    for k, v in (case.get("policy") or {}).items(): base[k] = v
+    return Policy(**base) if base else Policy()
+
+def _load_case(repo, cid, actor):
+    """Replace the workspace with one case, so every view works on the same
+    data: dashboard, ledger, run, approvals, forecast and copilot all read
+    this one workspace."""
+    if cid == "seed":
+        invs, pays = seed_invoices(), seed_payments()
+        name, source = "Demo seed workspace", "demo-seed"
+        expect = {pid: {"invoices": sorted(s)} for pid, s in GROUND_TRUTH.items()}
+        expect_exc = {}
+    else:
+        sc = get_scenario(cid)
+        if not sc: raise HTTPException(404, f"unknown case {cid}")
+        invs, pays = sc["build"]()
+        name, source = sc["title"], "use-case"
+        raw = dict(sc.get("expect") or {})
+        expect_exc = raw.pop("exceptions", {}) if isinstance(raw.get("exceptions"), dict) else {}
+        expect = {}
+        for pid, e in raw.items():
+            if isinstance(e, dict):
+                expect[pid] = {k: (sorted(v) if isinstance(v, (set, list)) and k == "invoices" else v)
+                               for k, v in e.items()}
+    repo.clear_workspace()
+    for inv in invs: repo.add_invoice(inv)
+    for p in pays: repo.add_payment(p, payment_fingerprint(p))
+    meta = {"id": cid, "name": name, "source": source,
+            "loaded_at": _now_iso(), "expect": expect,
+            "expect_exceptions": expect_exc}
+    if source == "use-case":
+        # Same grading policy as the scenario endpoint: the maker-checker
+        # threshold is raised while a pack is the active case, so the run's
+        # verdict isolates matching correctness on enterprise amounts.
+        # Approval gating itself lives in Policy Studio and its own flow.
+        meta["policy"] = {"maker_checker_threshold_cents": 10**12}
+        meta["policy_note"] = "Maker-checker threshold is raised for this use case, so its verdict isolates matching correctness (the same grading policy the pack states). Policy Studio still governs uploaded and demo data."
+    repo.set_meta("active_case", meta)
+    repo.audit(actor, "case_loaded", "workspace", cid,
+               {"invoices": len(invs), "payments": len(pays)}, _now_iso())
+    return pays
+
+@app.post("/api/v1/cases/{cid}/load")
+def load_case(cid: str, ctx=Depends(auth_context)):
+    need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    pays = _load_case(repo, cid, f"api:{ctx['role']}")
+    return {"workspace": _workspace_state(repo), "payments": [asdict(p) for p in pays]}
+
+@app.post("/api/v1/workspace/reset")
+def workspace_reset(ctx=Depends(auth_context)):
+    need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    repo.clear_workspace()
+    repo.audit(f"api:{ctx['role']}", "workspace_reset", "workspace", "", {}, _now_iso())
+    return _workspace_state(repo)
+
+class StagePaymentIn(BaseModel):
+    payment_id: str = ""; payer: str = ""; amount_cents: int = 0
+    references: List[str] = []; claimed_deduction_cents: int = 0
+    deduction_reason: str = ""; pod_verified_clean: bool = False
+    remittance_text: str = ""
+
+@app.post("/api/v1/workspace/stage-payment")
+def stage_payment(body: StagePaymentIn, ctx=Depends(auth_context)):
+    """Stage one parsed wire into the shared workspace (parsed in Upload,
+    reconciled in Run - the same flow as files and cases)."""
+    need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    if int(body.amount_cents or 0) <= 0:
+        raise HTTPException(422, "amount_cents must be positive - parse the remittance first")
+    pid = (body.payment_id or "").strip() or ("WIRE-" + uuid.uuid4().hex[:8].upper())
+    repo.add_payment(Payment(payment_id=pid, payer_raw=body.payer or "Unknown payer",
+                             amount_cents=int(body.amount_cents),
+                             claimed_deduction_cents=int(body.claimed_deduction_cents or 0),
+                             deduction_reason_raw=body.deduction_reason or "",
+                             pod_verified_clean=bool(body.pod_verified_clean),
+                             remittance_text=body.remittance_text or "",
+                             references=list(body.references or [])))
+    if not repo.get_meta("active_case"):
+        repo.set_meta("active_case", {"id": "ingested", "name": "Ingested remittance",
+                                      "source": "Remittance paste in Upload Center",
+                                      "loaded_at": _now_iso()})
+    repo.audit(f"api:{ctx['role']}", "payment_staged", "payment", pid,
+               {"amount_cents": int(body.amount_cents)}, _now_iso())
+    return {"staged": pid, "workspace": _workspace_state(repo)}
 
 @app.get("/api/v1/invoices")
 def invoices(ctx=Depends(auth_context)):
@@ -114,24 +231,32 @@ def invoices(ctx=Depends(auth_context)):
 @app.post("/api/v1/invoices/import")
 def import_invoices(payload: dict, ctx=Depends(auth_context)):
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    was_empty = len(repo.open_invoices()) == 0 and not repo.get_meta("active_case")
     out = parse_invoices_csv(payload.get("csv_text", ""))
     for inv in out["invoices"]: repo.add_invoice(inv)
+    if was_empty and out["invoices"]:
+        repo.set_meta("active_case", {"id": "upload", "name": "Uploaded ledger", "source": "upload",
+                                      "loaded_at": _now_iso(), "expect": {}, "expect_exceptions": {}})
     return {"imported": len(out["invoices"]), "mapping": out["mapping"], "errors": out["errors"], "fingerprint": out["fingerprint"]}
 
 @app.post("/api/v1/batches")
 def batches(body: BatchIn, ctx=Depends(auth_context)):
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
-    stored = store.get_policy(ctx["tenant_id"])
-    pol = Policy(**body.policy) if body.policy else (Policy(**stored) if stored else Policy())
-    return run_batch(repo, [_pay(p) for p in body.payments], pol, body.idempotency_key, actor=f"api:{ctx['role']}")
+    pol = _policy_for(repo, ctx["tenant_id"], body.policy)
+    pays = [_pay(p) for p in body.payments]
+    for p in pays: repo.add_payment(p, payment_fingerprint(p))
+    return run_batch(repo, pays, pol, body.idempotency_key, actor=f"api:{ctx['role']}")
 
 @app.post("/api/v1/payments/import")
 def import_payments(payload: dict, ctx=Depends(auth_context)):
     """Upload a payments CSV: parse it, then reconcile it as a batch."""
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
     out = parse_payments_csv(payload.get("csv_text", ""))
-    stored = store.get_policy(ctx["tenant_id"])
-    pol = Policy(**stored) if stored else Policy()
+    for p in out["payments"]: repo.add_payment(p, payment_fingerprint(p))
+    if out["payments"] and not repo.get_meta("active_case"):
+        repo.set_meta("active_case", {"id": "upload", "name": "Uploaded files", "source": "upload",
+                                      "loaded_at": _now_iso(), "expect": {}, "expect_exceptions": {}})
+    pol = _policy_for(repo, ctx["tenant_id"], None)
     import uuid as _uuid
     run = run_batch(repo, out["payments"], pol, payload.get("idempotency_key") or ("csv-" + _uuid.uuid4().hex[:10]),
                     actor=f"api:{ctx['role']}") if out["payments"] else None
@@ -149,7 +274,15 @@ def methodology():
 
 @app.get("/api/v1/scenarios")
 def scenarios():
-    return [{"id": s["id"], "title": s["title"], "story": s["story"], "shows": s["shows"]} for s in SCENARIOS]
+    out = []
+    for s in SCENARIOS:
+        invs, pays = s["build"]()
+        out.append({"id": s["id"], "title": s["title"], "story": s["story"], "shows": s["shows"],
+                    "invoices": len(invs), "payments": len(pays),
+                    "customers": len({i.customer for i in invs}),
+                    "open_cents": sum(i.gross_cents for i in invs),
+                    "batch_cents": sum(p.amount_cents for p in pays)})
+    return out
 
 @app.post("/api/v1/scenarios/custom/run")
 def run_custom_case(payload: dict, ctx=Depends(auth_context)):
@@ -173,6 +306,32 @@ def run_custom_case(payload: dict, ctx=Depends(auth_context)):
     for inv in invs: mem.add_invoice(inv)
     run = run_batch(mem, pays, Policy(), "custom-" + uuid.uuid4().hex[:8], actor="custom-case")
     return {"run": run}
+
+@app.post("/api/v1/workspace/load-custom")
+def load_custom_case(payload: dict, ctx=Depends(auth_context)):
+    """Builder cases join the same shared workspace as every other case:
+    staged here, they run from Run Reconciliation like anything else."""
+    need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    from domain import Invoice as _Inv, Payment as _Pay
+    invs = [_Inv(invoice_id=str(i["invoice_id"]), customer=str(i.get("customer", "UNKNOWN")),
+                 subsidiary=str(i.get("customer", "UNKNOWN")), gross_cents=int(i["gross_cents"]),
+                 po_number=i.get("po_number") or None, discount_rate=float(i.get("discount_rate", 0) or 0),
+                 age_days=int(i.get("age_days", 0) or 0)) for i in payload.get("invoices", [])]
+    pays = [_Pay(payment_id=str(p["payment_id"]), payer_raw=str(p.get("payer_raw", "UNKNOWN")),
+                 amount_cents=int(p["amount_cents"]), claimed_deduction_cents=int(p.get("claimed_deduction_cents", 0) or 0),
+                 deduction_reason_raw=str(p.get("deduction_reason_raw", "") or ""),
+                 pod_verified_clean=bool(p.get("pod_verified_clean", False)),
+                 remittance_text=str(p.get("remittance_text", "") or ""),
+                 references=list(p.get("references", []) or [])) for p in payload.get("payments", [])]
+    if not invs or not pays: raise HTTPException(400, "a case needs at least one invoice and one payment")
+    repo.clear_workspace()
+    for inv in invs: repo.add_invoice(inv)
+    for p in pays: repo.add_payment(p, payment_fingerprint(p))
+    repo.set_meta("active_case", {"id": "custom", "name": "Custom case (builder)", "source": "custom",
+                                  "loaded_at": _now_iso(), "expect": {}, "expect_exceptions": {}})
+    repo.audit(f"api:{ctx['role']}", "case_loaded", "workspace", "custom",
+               {"invoices": len(invs), "payments": len(pays)}, _now_iso())
+    return {"workspace": _workspace_state(repo), "payments": [asdict(p) for p in pays]}
 
 @app.post("/api/v1/scenarios/{sid}/run")
 def run_scenario(sid: str, ctx=Depends(auth_context)):
@@ -225,6 +384,7 @@ class StreamIn(BaseModel):
     seed: bool = False
     payments: list[PaymentIn] = []
     policy: dict | None = None
+    use_workspace: bool = False
 
 @app.post("/api/v1/runs/stream")
 def run_stream(body: StreamIn, ctx=Depends(auth_context)):
@@ -232,12 +392,15 @@ def run_stream(body: StreamIn, ctx=Depends(auth_context)):
     (resolve -> solve -> deduction -> decision) over server-sent events."""
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
     if body.seed:
-        for inv in seed_invoices(): repo.add_invoice(inv)
-        payments = seed_payments()
-    else:
+        payments = _load_case(repo, "seed", f"api:{ctx['role']}")
+    elif body.payments:
         payments = [_pay(p) for p in body.payments]
-    stored = store.get_policy(ctx["tenant_id"])
-    pol = Policy(**body.policy) if body.policy else (Policy(**stored) if stored else Policy())
+        for p in payments: repo.add_payment(p, payment_fingerprint(p))
+    elif body.use_workspace:
+        payments = repo.pending_payments() or repo.all_payments()
+    else:
+        payments = []
+    pol = _policy_for(repo, ctx["tenant_id"], body.policy)
     q = _queue.Queue()
     def _run():
         try:
@@ -311,6 +474,28 @@ def parse(body: ParseIn, ctx=Depends(auth_context)):
         {"stage": "4. Trust decision", "engine": "policy", "ms": 0,
          "detail": "Verified - safe to reconcile" if v["verified"] else "Not fully verified - flagged references must be resolved by a human first"}]
     return out
+
+@app.get("/api/v1/runs/{run_id}/brief")
+def run_brief_ep(run_id: str, ctx=Depends(auth_context)):
+    """The agent's own brief of a finished run - what it posted, what it
+    held and why, and what a human should do next."""
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    if run_id not in {r["run_id"] for r in repo.list_runs(50)}:
+        raise HTTPException(404, "unknown run")
+    return run_brief(repo, run_id)
+
+class DraftIn(BaseModel):
+    kind: str = "dispute_email"; tone: str = "strict"; facts: dict = {}
+
+@app.post("/api/v1/ai/draft")
+def ai_draft(body: DraftIn, ctx=Depends(auth_context)):
+    """Draft a dispute email or a negotiation rebuttal from case facts.
+    Gemini rewrites when a key is configured; the grounded template is
+    the fallback and the source is always returned."""
+    need(ctx, "run")
+    if body.kind not in ("dispute_email", "rebuttal"):
+        raise HTTPException(422, "kind must be dispute_email or rebuttal")
+    return draft_message(body.kind, body.tone, body.facts or {})
 
 @app.post("/api/v1/copilot")
 def copilot(body: CopilotIn, ctx=Depends(auth_context)):

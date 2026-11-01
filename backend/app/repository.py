@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS aliases(
   raw_name TEXT PRIMARY KEY, customer TEXT, source TEXT);
 CREATE TABLE IF NOT EXISTS column_mappings(
   source_fingerprint TEXT PRIMARY KEY, mapping_json TEXT);
+CREATE TABLE IF NOT EXISTS workspace_meta(
+  key TEXT PRIMARY KEY, value TEXT);
 """
 
 class Repository:
@@ -39,6 +41,9 @@ class Repository:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(payments)").fetchall()]
+        if "references_json" not in cols:
+            self.conn.execute("ALTER TABLE payments ADD COLUMN references_json TEXT DEFAULT '[]'")
         self.conn.commit()
 
     def _x(self, sql, params=()):
@@ -53,10 +58,50 @@ class Repository:
                  inv.po_number, inv.discount_rate, inv.age_days, inv.due_in_days, inv.predicted_delay_days))
 
     def add_payment(self, pay, fingerprint=""):
-        self._x("INSERT OR REPLACE INTO payments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        self._x("INSERT OR REPLACE INTO payments(payment_id, payer_raw, payer_customer, amount_cents,"
+                " currency, claimed_deduction_cents, deduction_reason_raw, pod_verified_clean,"
+                " remittance_text, fingerprint, references_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (pay.payment_id, pay.payer_raw, None, pay.amount_cents, pay.currency,
                  pay.claimed_deduction_cents, pay.deduction_reason_raw,
-                 1 if pay.pod_verified_clean else 0, pay.remittance_text, fingerprint))
+                 1 if pay.pod_verified_clean else 0, pay.remittance_text, fingerprint,
+                 json.dumps(list(getattr(pay, "references", []) or []))))
+
+    def all_payments(self):
+        rows = self.conn.execute(
+            "SELECT payment_id, payer_raw, amount_cents, currency, claimed_deduction_cents,"
+            " deduction_reason_raw, pod_verified_clean, remittance_text, references_json"
+            " FROM payments ORDER BY rowid").fetchall()
+        from domain import Payment
+        out = []
+        for r in rows:
+            try: refs = json.loads(r[8] or "[]")
+            except Exception: refs = []
+            out.append(Payment(payment_id=r[0], payer_raw=r[1], amount_cents=r[2], currency=r[3],
+                               claimed_deduction_cents=r[4], deduction_reason_raw=r[5] or "",
+                               pod_verified_clean=bool(r[6]), remittance_text=r[7] or "",
+                               references=refs))
+        return out
+
+    def pending_payments(self):
+        """Staged payments no run has touched yet (not in matches or exceptions)."""
+        done = {r[0] for r in self.conn.execute("SELECT payment_id FROM matches").fetchall()}
+        done |= {r[0] for r in self.conn.execute("SELECT payment_id FROM exceptions").fetchall()}
+        return [p for p in self.all_payments() if p.payment_id not in done]
+
+    def clear_workspace(self):
+        with self._lock:
+            for t in ("invoices", "payments", "runs", "run_steps", "matches", "exceptions", "workspace_meta"):
+                self.conn.execute(f"DELETE FROM {t}")
+            self.conn.commit()
+
+    def set_meta(self, key, value):
+        self._x("INSERT OR REPLACE INTO workspace_meta VALUES (?,?)", (key, json.dumps(value)))
+
+    def get_meta(self, key):
+        r = self.conn.execute("SELECT value FROM workspace_meta WHERE key=?", (key,)).fetchone()
+        if not r: return None
+        try: return json.loads(r[0])
+        except Exception: return None
 
     def open_invoices(self, customer=None, subsidiary=None):
         q = "SELECT invoice_id, customer, subsidiary, gross_cents, currency, po_number, discount_rate, age_days, due_in_days, predicted_delay_days FROM invoices WHERE status='OPEN'"

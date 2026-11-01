@@ -29,6 +29,18 @@ class GeminiClient:
             r.raise_for_status()
             text = r.json()["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(text)
+    def generate_text(self, prompt):
+        if not self.available:
+            raise RuntimeError("GEMINI_API_KEY not configured")
+        payload = {"contents": [{"parts": [{"text": prompt}]}],
+                   "generationConfig": {"temperature": 0.2}}
+        if self.transport is not None:
+            resp = self.transport(payload)
+            return resp["candidates"][0]["content"]["parts"][0]["text"]
+        with httpx.Client(timeout=30) as c:
+            r = c.post(GEMINI_URL, params={"key": self.api_key}, json=payload)
+            r.raise_for_status()
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 INV_RE = re.compile(r"\bINV[- ]?\d+\b", re.I)
 PO_RE = re.compile(r"\bPO[- ]?\d+\b", re.I)
