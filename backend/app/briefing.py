@@ -68,7 +68,13 @@ def run_brief(repo, run_id, client=None):
     f = run_facts(repo, run_id)
     base = _brief_deterministic(f)
     client = client or GeminiClient()
+    # ai_state keeps the UI honest about WHY the deterministic text is
+    # showing: no key at all, a call that failed, or a draft that failed
+    # the grounding check are three different situations and the label
+    # must not blur them into "not configured".
+    base["ai_state"] = "no_key"
     if client.available:
+        base["ai_state"] = "call_failed"
         try:
             facts = (f"payments={f['payments']}, auto_posted={f['auto_posted']}, held={f['held']}, "
                      f"cash_posted={_money(f['cash_posted_cents'])}, held_reasons={f['held_reasons']}, "
@@ -81,6 +87,9 @@ def run_brief(repo, run_id, client=None):
             if str(f["auto_posted"]) in text and str(f["payments"]) in text:
                 base["body"] = [text.strip()] + base["body"][1:]
                 base["source"] = "gemini"
+                base["ai_state"] = "gemini"
+            else:
+                base["ai_state"] = "unverified"
         except Exception:
             pass
     base["facts"] = f
@@ -162,7 +171,9 @@ def draft_message(kind, tone, facts, client=None):
     else:
         text, label = _rebuttal_template(facts), "template"
     client = client or GeminiClient()
+    ai_state = "no_key"
     if client.available:
+        ai_state = "call_failed"
         try:
             out = client.generate_text(
                 "Rewrite this business email draft in a firm, professional tone. Keep EVERY number, "
@@ -170,7 +181,8 @@ def draft_message(kind, tone, facts, client=None):
             anchor = _money(facts.get("claimed_cents", 0)) if kind != "chase_email" \
                 else _money(facts.get("amount_cents", 0))
             if out and anchor in out and len(out) > 40:
-                return {"text": out.strip(), "source": "gemini"}
+                return {"text": out.strip(), "source": "gemini", "ai_state": "gemini"}
+            ai_state = "unverified"
         except Exception:
             pass
-    return {"text": text, "source": label}
+    return {"text": text, "source": label, "ai_state": ai_state}

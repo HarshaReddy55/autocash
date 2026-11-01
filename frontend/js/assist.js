@@ -15,9 +15,21 @@ async function runParse(text){
     $("parse-out").innerHTML=pipeHtml+`<div class="panel"><h3>Structured result <span data-info="parsefld"></span></h3>
     <div class="detail">Parser: <b>${esc(out.source||"deterministic")}</b> ${out.degraded?pill("deterministic fallback - no Gemini key configured","warn"):""}<br>
     Amount: <b>${f.amount_cents!=null?money(f.amount_cents):"-"}</b> - Payer: <b>${esc(f.payer||"-")}</b> - Claimed deduction: <b>${f.deduction_cents!=null?money(f.deduction_cents):"-"}</b>${f.deduction_reason?` (${esc(f.deduction_reason)})`:""}<br>
-    References extracted: ${refs}<br>${out.verification?(out.verification.verified?pill("Verifier: every reference exists in the open ledger","ok"):("Verifier flags: "+issues)):""}</div>
+    References extracted: ${refs}<br>${out.verification?(out.verification.verified?pill("Verifier: every reference exists in the open ledger","ok"):("Verifier flags: "+issues)):""}${(out.verification&&out.verification.unknown_refs&&out.verification.unknown_refs.length)?`<p style="margin:8px 0 0"><button class="btn small" onclick="seedRefsAndStage(this)">+ Auto-Seed Referenced Invoices into Ledger &amp; Stage Wire (${out.verification.unknown_refs.map(esc).join(", ")})</button> <small>Creates exactly those missing invoices in the ledger - at the wire amount for a single reference, or the amounts this remittance itself lists - then stages the wire against them.</small></p>`:""}</div>
     <details><summary><small>Raw response</small></summary><pre style="background:#0f172a;color:#dbeafe;padding:14px;border-radius:10px;overflow:auto;font-size:12px">${esc(JSON.stringify(out,null,2))}</pre></details></div>`;
     LAST_PARSE=out; renderWireCard();
+}
+async function seedRefsAndStage(btn){
+  if(!LAST_PARSE) return;
+  const f=LAST_PARSE.fields||{}; const refs=(LAST_PARSE.verification||{}).unknown_refs||[];
+  if(!refs.length) return;
+  btn.disabled=true;
+  try{ const d=await api("/api/v1/invoices/seed-referenced",{method:"POST",body:JSON.stringify({refs,payer:f.payer||"",wire_amount_cents:f.amount_cents||0,remittance_text:$("parse-in").value})});
+    if(d.unresolved&&d.unresolved.length){ toast("Seeded "+(d.seeded||[]).length+" invoice(s), but no amount could be determined for "+d.unresolved.join(", ")+" from the remittance - add those in the Ledger or the Case Builder, then stage the wire"); btn.disabled=false; return }
+    toast("Seeded "+d.seeded.map(s=>s.invoice_id).join(", ")+" into the ledger - staging the wire against them");
+    await refreshWorkspace();
+    await stageParsed(btn);
+  }catch(e){ toast("Seeding failed: "+e.message); btn.disabled=false }
 }
 async function doParse(btn){
   if(btn)btn.disabled=true;
@@ -133,7 +145,14 @@ async function savePolicy(btn){
   btn.disabled=true;
   try{ await previewPolicy(null);
     const d=await api("/api/v1/policy",{method:"PUT",body:JSON.stringify({policy:policyFormBody()})});
-    toast("Policy saved - the next batch run uses it (impact preview above)"); $("policy-src").textContent="Source: tenant (just saved)";
+    $("policy-src").textContent="Source: tenant (just saved)";
+    if(WS&&WS.case){
+      toast("Policy saved - re-running the active case under it");
+      await runWorkspaceBatch(null); go("run");
+      const el=$("run-diff"); if(el&&(el.style.display==="none"||!el.innerHTML)) toggleRunDiff();
+    } else {
+      toast("Policy saved - the next batch run uses it (impact preview above)");
+    }
   }catch(e){toast("Save failed: "+e.message)}finally{btn.disabled=false}
 }
 
@@ -147,12 +166,23 @@ async function loadMethod(){
 let cbSeq=0;
 function cbRow(id,cust,amt,po,age){
   cbSeq++;
-  return `<div style="display:grid;grid-template-columns:1.1fr 1fr .8fr 1fr .6fr;gap:8px;margin-bottom:8px" class="cb-row">
+  return `<div style="display:grid;grid-template-columns:1.1fr 1fr .8fr 1fr .6fr .3fr;gap:8px;margin-bottom:8px;align-items:center" class="cb-row">
   <input type="text" placeholder="Invoice ID" value="${id||("INV-"+cbSeq)}"><input type="text" placeholder="Customer" value="${cust||"Apex Manufacturing"}">
   <input type="number" placeholder="Amount $" value="${amt||""}"><input type="text" placeholder="PO (optional)" value="${po||""}">
-  <input type="number" placeholder="Age days" value="${age||""}"></div>`;
+  <input type="number" placeholder="Age days" value="${age||""}"><label title="Include this invoice in the auto-calculated wire total" style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="cb-tick" checked style="width:auto"><small>wire</small></label></div>`;
 }
 function cbAddRow(id,cust,amt,po,age){$("cb-invs").insertAdjacentHTML("beforeend",cbRow(id,cust,amt,po,age))}
+function cbCalcWire(){
+  let sum=0; const ids=[];
+  document.querySelectorAll(".cb-row").forEach(r=>{ const i=r.querySelectorAll("input"); const tick=r.querySelector(".cb-tick");
+    if(tick&&tick.checked){ sum+=Math.round(parseFloat(i[2].value||0)*100); if(i[0].value.trim()) ids.push(i[0].value.trim()); } });
+  if(!ids.length){ toast("Tick at least one invoice row to total"); return }
+  const ded=Math.round(parseFloat($("cb-ded").value||0)*100);
+  const wire=Math.max(0,sum-ded);
+  $("cb-amount").value=(wire/100).toFixed(2);
+  $("cb-refs").value=ids.join(", ");
+  toast(`Wire total set: ${ids.length} ticked invoice(s) ${money(sum)} minus claimed deduction ${money(ded)} = ${money(wire)} - an exact, solvable wire`);
+}
 cbAddRow("INV-1","Apex Manufacturing",300,"PO-1",40); cbAddRow("INV-2","Apex Manufacturing",200,"PO-2",10); cbAddRow("INV-3","Apex Manufacturing",500,"PO-3",25);
 async function cbRun(btn){
   const invs=[...document.querySelectorAll(".cb-row")].map(r=>{const i=r.querySelectorAll("input");return {invoice_id:i[0].value.trim(),customer:i[1].value.trim()||"UNKNOWN",gross_cents:Math.round(parseFloat(i[2].value||0)*100),po_number:i[3].value.trim()||null,age_days:parseInt(i[4].value||0)}}).filter(x=>x.invoice_id&&x.gross_cents>0);
@@ -161,12 +191,17 @@ async function cbRun(btn){
   if(!invs.length){toast("Add at least one invoice with an amount");return}
   btn.disabled=true;
   try{const d=await api("/api/v1/workspace/load-custom",{method:"POST",body:JSON.stringify({invoices:invs,payments:[pay]})});
-    WS=d.workspace; casePayments=d.payments; seedPayments=d.payments; renderCasebar();
-    $("cb-out").innerHTML=`<div class="msg">Your case is now the active case in the shared workspace: <b>${invs.length} invoices and 1 payment staged</b>. Taking you to Run Reconciliation - run it there and open the match for its full derivation.</div>`;
+    WS=d.workspace; casePayments=d.payments; seedPayments=d.payments; if(d.run) lastRun=d.run; renderCasebar();
+    $("cb-out").innerHTML=`<div class="msg">Your case is now the active case and it has already run: <b>${invs.length} invoices and 1 payment</b>${d.run?`, ${d.run.auto_posted} of ${d.run.payments} auto-posted`:''}. Taking you to the run - open the match for its full derivation.</div>`;
     toast("Custom case loaded into the workspace"); setTimeout(()=>go("run"),650);
   }catch(e){toast("Case failed: "+e.message)}finally{btn.disabled=false}
 }
-const LOADERS={dash:refreshDash,ledger:loadLedger,forecast:loadForecast,eval:loadEval,health:async()=>{await loadHealth();await loadAudit()},cases:loadCases,policy:loadPolicy,method:loadMethod,arch:loadDiag,run:async()=>{await refreshWorkspace();await renderGradeFromStored();await loadApprovals()},upload:async()=>{await refreshWorkspace();loadAiStrip();wireAutoParse()}};
+const LOADERS={step1:async()=>{await refreshDash();await loadCases();await loadLedger();loadAiStrip();wireAutoParse()},
+run:async()=>{await refreshWorkspace();if(WS&&WS.latest_run){const rid=WS.latest_run.run_id;const [m,x]=await Promise.all([api(`/api/v1/runs/${rid}/matches`),api(`/api/v1/runs/${rid}/exceptions`)]);renderStoredRun(rid,m,x)}await renderGradeFromStored();await loadApprovals()},
+gov:async()=>{await loadGov();await loadPolicy()},
+sap:loadSap,mail:loadMailHub,
+score:async()=>{await loadScore();await loadForecast()},
+eval:loadEval,health:async()=>{await loadHealth();await loadAudit()},method:loadMethod,arch:loadDiag};
 async function runLive(btn){
   btn.disabled=true; btn.textContent="Running...";
   const out=$("live-out");
@@ -230,30 +265,22 @@ async function loadApprovals(){
     const badge=$("appr-count");
     if(badge){badge.style.display=list.length?"":"none"; badge.textContent=list.length+" waiting"}
     __apprN=list.length;
-    out.innerHTML=list.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Amount <span data-info="amt"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Conf. <span data-info="conf"></span></th><th>Why it is held <span data-info="held"></span></th><th>Decision <span data-info="apprdec"></span></th></tr>${list.map(a=>`<tr><td>${esc(a.payment_id)}<br><small>${esc(a.run_id)}</small></td><td>${a.amount_cents==null?"-":money(a.amount_cents)}</td><td>${a.invoices.map(esc).join(", ")||"-"}</td><td>${Number(a.confidence).toFixed(2)}</td><td style="max-width:340px">${esc(a.decision_reason||"Held for review")}</td><td style="white-space:nowrap"><button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`:"<small>Nothing waiting. Matches appear here when policy holds one - lower the maker-checker threshold in Policy Studio and run a batch to see it work.</small>";
+    out.innerHTML=list.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Amount <span data-info="amt"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Conf. <span data-info="conf"></span></th><th>Why it is held <span data-info="held"></span></th><th>Decision <span data-info="apprdec"></span></th></tr>${list.map(a=>{const refusal=!(a.invoices||[]).length;return `<tr><td>${esc(a.payment_id)}<br><small>${esc(a.run_id)}</small></td><td>${a.amount_cents==null?"-":money(a.amount_cents)}</td><td>${refusal?pill("Refusal - no invoices matched","warn"):a.invoices.map(esc).join(", ")}</td><td>${Number(a.confidence).toFixed(2)}</td><td style="max-width:340px">${esc(a.decision_reason||"Held for review")}</td><td style="white-space:nowrap">${refusal?`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Park in suspense GL</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Send back</button>`:`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button>`}</td></tr>`}).join("")}</table>${list.some(a=>!(a.invoices||[]).length)?`<small>A refusal is the solver's verdict that nothing in the ledger explains the wire. It can never be posted - there is no document behind it. Park it in unapplied suspense (the remittance chase is already drafted in the Mail Hub) or send it back for manual allocation.</small>`:""}`:"<small>Nothing waiting. Matches appear here when policy holds one - lower the maker-checker threshold in Policy Studio and run a batch to see it work.</small>";
   }catch(e){out.innerHTML=`<small>Could not load approvals: ${esc(e.message)}</small>`}
   return __apprN;
 }
 let __apprTimer=null;
 async function scheduleApprovalsJump(ms){
-  // After the run's mechanism is on screen, glide to the approvals queue on
-  // the same page so held matches are never missed. Manual scrolling cancels.
+  // v23: the queue lives on Step 3 now, and the tour's next-step bar
+  // points there. No more auto-scroll - this only refreshes the count.
   __apprN=await loadApprovals();
-  if(!__apprN)return;
-  clearTimeout(__apprTimer);
-  const cancel=()=>{clearTimeout(__apprTimer);window.removeEventListener("wheel",cancel);window.removeEventListener("touchstart",cancel)};
-  window.addEventListener("wheel",cancel,{passive:true}); window.addEventListener("touchstart",cancel,{passive:true});
-  __apprTimer=setTimeout(()=>{cancel();const p=document.getElementById("approvals-panel");if(!p)return;
-    p.scrollIntoView({behavior:"smooth",block:"start"});
-    p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash");
-    toast(__apprN+(__apprN===1?" match is":" matches are")+" waiting for approval - this queue lives on this page, below the matches");
-  },ms);
 }
 async function decideMatch(id,decision,btn){
   btn.disabled=true;
   try{const r=await api("/api/v1/matches/"+id+"/decision",{method:"POST",body:JSON.stringify({decision})});
     BRIEF_RUN=null; BRIEF_PROMISE=null;
     let msg=(decision==="approve"?"Match approved and posted":"Match rejected");
+    if(r.status==="PARKED_SUSPENSE") msg="Refusal accepted - wire parked in unapplied suspense. No document issued, nothing posted";
     if(decision==="approve"&&r.erp_document_id) msg+=` - ERP document ${r.erp_document_id}`;
     if(decision==="approve"&&(r.settled_invoices||[]).length) msg+=` - ${r.settled_invoices.length} invoice(s) settled and out of the forecast`;
     if(r.fingerprint) msg+=` - audit fingerprint ${r.fingerprint.slice(0,12)}...`;
@@ -263,7 +290,30 @@ async function decideMatch(id,decision,btn){
   catch(e){toast("Decision failed: "+e.message); btn.disabled=false}
 }
 /* ---- v9: connectivity - drawer, run diff, handoffs, forecast disputes ---- */
-function openApprovals(){ openApprDrawer(); }
+function openApprovals(){ go("gov"); }
+/* v23 Step 3: the sign-off queue on the main canvas (the panel moved
+   here from the Run view; loadApprovals renders into it unchanged),
+   with a bulk action for everything the solver proved exactly. */
+async function loadGov(){
+  const n=await loadApprovals();
+  let real=0, refusals=0;
+  try{ const list=await api("/api/v1/approvals"); real=list.filter(a=>(a.invoices||[]).length).length; refusals=list.length-real; }catch(e){}
+  const b=$("gov-approve-all");
+  if(b){ b.disabled=!real; b.textContent=real?`Approve & post all ${real} held matches`:"Approve & post all held matches"; }
+  const gc=$("gov-count"); if(gc) gc.textContent=n?`- ${n} waiting${refusals?` (${refusals} refusal${refusals===1?"":"s"} - park or send back individually)`:""}`:"";
+}
+async function approveAllHeld(btn){
+  btn.disabled=true;
+  try{ const list=await api("/api/v1/approvals");
+    const real=list.filter(a=>(a.invoices||[]).length); const refusals=list.length-real.length;
+    let ok=0;
+    for(const a of real){ await api("/api/v1/matches/"+a.match_id+"/decision",{method:"POST",body:JSON.stringify({decision:"approve"})}); ok++; }
+    BRIEF_RUN=null; BRIEF_PROMISE=null;
+    toast(`Approved and posted ${ok} held match${ok===1?"":"es"} - SAP documents issued, invoices settled, settlement drafts generated${refusals?`. ${refusals} refusal${refusals===1?"":"s"} left in the queue - a refusal is never bulk-posted; park or send it back individually`:""}`);
+    const w=await refreshWorkspace(); if(w) refreshDash();
+  }catch(e){ toast("Bulk approval stopped partway: "+e.message) }
+  loadGov();
+}
 async function openApprDrawer(){
   $("appr-drawer").classList.add("on"); $("drawer-scrim").classList.add("on");
   renderApprDrawer();
@@ -272,11 +322,12 @@ function closeApprDrawer(){ $("appr-drawer").classList.remove("on"); $("drawer-s
 async function renderApprDrawer(){
   const el=$("drawer-list"); if(!el) return;
   try{ const list=await api("/api/v1/approvals");
-    el.innerHTML=list.length?list.map(a=>`<div class="deskcard"><b>${esc(a.payment_id)}</b> - ${a.amount_cents==null?"-":money(a.amount_cents)} - invoices ${a.invoices.map(esc).join(", ")||"-"}<br><small>${esc(a.decision_reason||"Held for review")}</small><div style="margin-top:8px"><button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button></div></div>`).join(""):"<small>Nothing waiting. When policy holds a match it appears here, on every page.</small>";
+    el.innerHTML=list.length?list.map(a=>{const refusal=!(a.invoices||[]).length;return `<div class="deskcard"><b>${esc(a.payment_id)}</b> - ${a.amount_cents==null?"-":money(a.amount_cents)} - ${refusal?"refusal: no invoices matched":"invoices "+a.invoices.map(esc).join(", ")}<br><small>${esc(a.decision_reason||"Held for review")}</small><div style="margin-top:8px">${refusal?`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Park in suspense GL</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Send back</button>`:`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button>`}</div></div>`}).join(""):"<small>Nothing waiting. When policy holds a match it appears here, on every page.</small>";
   }catch(e){ el.innerHTML=`<small>Could not load approvals: ${esc(e.message)}</small>` }
 }
 let DIFFSEL={cur:null,prev:null};
 async function toggleRunDiff(){
+  if(CURVIEW!=="run") go("run");
   const el=$("run-diff");
   if(el.style.display!=="none"&&el.innerHTML){ el.style.display="none"; return }
   el.style.display="block"; el.innerHTML="<small>Loading run comparison...</small>";
@@ -313,10 +364,11 @@ function showHandoff(){
   const tot=p.reduce((a,x)=>a+(x.amount_cents||0),0);
   el.innerHTML=`<div class="hobanner"><span>&#10003; <b>${p.length} payment${p.length>1?"s":""} staged (${money(tot)})</b> - ready to reconcile.</span><button class="btn" onclick="gotoRunStaged()">Execute reconciliation &rarr;</button><small>The staged payments are highlighted at the top of the Run page.</small></div>`;
 }
-function gotoRunStaged(){
+async function gotoRunStaged(){
+  const ids=new Set((WS&&WS.pending_payments||[]).map(p=>p.payment_id));
   go("run");
-  setTimeout(()=>{ const box=$("staged-box"); if(!box) return;
-    const ids=new Set((WS.pending_payments||[]).map(p=>p.payment_id));
+  await runWorkspaceBatch(null);
+  setTimeout(()=>{ const box=$("matches"); if(!box) return;
     box.querySelectorAll("table tr").forEach(tr=>{ const td=tr.querySelector("td"); if(td&&ids.has(td.textContent.trim())) tr.classList.add("hlrow"); });
     box.scrollIntoView({behavior:"smooth",block:"center"});
   },420);
@@ -382,7 +434,7 @@ async function loadBrief(runId){
   const el=$("run-brief"); if(!el) return;
   try{
     const b=await api(`/api/v1/runs/${runId}/brief`);
-    el.innerHTML=`<div class="panel"><h3>Agent brief - run ${esc(runId)} <span data-info="brief"></span></h3><div class="detail"><b>${esc(b.headline)}</b>${(b.body||[]).map(x=>`<br>${esc(x)}`).join("")}<br><br><b>Next actions:</b><br>${(b.next_actions||[]).map(a=>"· "+esc(a)).join("<br>")}<br><br>${pill(b.source==="gemini"?"Written by Gemini from run records":"Composed from run records - Gemini not configured","info")}</div></div>`;
+    el.innerHTML=`<div class="panel"><h3>Agent brief - run ${esc(runId)} <span data-info="brief"></span></h3><div class="detail"><b>${esc(b.headline)}</b>${(b.body||[]).map(x=>`<br>${esc(x)}`).join("")}<br><br><b>Next actions:</b><br>${(b.next_actions||[]).map(a=>"· "+esc(a)).join("<br>")}<br><br>${pill(b.source==="gemini"?"Written by Gemini from run records":"Composed from run records - "+aiWhy(b),"info")}</div></div>`;
   }catch(e){ el.innerHTML="" }
 }
 let DESK=[];
@@ -408,7 +460,7 @@ async function chaseDraft(i,btn){
   btn.disabled=true;
   try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"chase_email",tone:"strict",facts:CHASE[i]})});
     $("chase-text-"+i).value=d.text;
-    $("chase-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - Gemini not configured","info");
+    $("chase-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
   }catch(e){toast(e.message)} finally{btn.disabled=false}
 }
 function copyChase(i){ navigator.clipboard.writeText($("chase-text-"+i).value).then(()=>toast("Chase draft copied")) }
@@ -455,7 +507,7 @@ async function deskDraft(i,btn){
   btn.disabled=true;
   try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"dispute_email",tone:DESK[i].tone,facts:DESK[i]})});
     $("desk-text-"+i).value=d.text;
-    $("desk-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - Gemini not configured","info");
+    $("desk-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
   }catch(e){toast(e.message)} finally{btn.disabled=false}
 }
 async function deskRebuttal(i,kind,btn){
@@ -463,18 +515,21 @@ async function deskRebuttal(i,kind,btn){
   btn.disabled=true;
   try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"rebuttal",tone:f.tone,facts})});
     $("desk-reb-"+i).value=d.text;
-    $("desk-reb-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - Gemini not configured","info");
+    $("desk-reb-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
   }catch(e){toast(e.message)} finally{btn.disabled=false}
 }
 function copyDesk(i){ navigator.clipboard.writeText($("desk-text-"+i).value).then(()=>toast("Claim draft copied")) }
 function copyDeskReb(i){ navigator.clipboard.writeText($("desk-reb-"+i).value).then(()=>toast("Rebuttal copied")) }
+function aiWhy(d){ const s=(d||{}).ai_state; return s==="no_key"?"Gemini not configured":s==="call_failed"?"Gemini did not answer":s==="unverified"?"Gemini draft failed the fact check":"grounded template" }
 async function renderImpact(){
   const el=$("impact-body"); if(!el) return;
+  const g=WS_GEN;
   try{
     const runs=await api("/api/v1/runs"); if(!runs.length){ el.innerHTML=""; return }
     let cash=0, auto=0, totLines=0, autoLines=0, rec=0;
-    for(const r of runs.slice(0,5)){
-      const ms=await api(`/api/v1/runs/${r.run_id}/matches`);
+    const allMatches=await Promise.all(runs.slice(0,5).map(r=>api(`/api/v1/runs/${r.run_id}/matches`)));
+    if(g!==WS_GEN) return; // case switched while fetching - do not paint the old case's impact
+    for(const ms of allMatches){
       for(const m of ms){ const res=m.result||{}; const lines=res.lines||[]; totLines+=lines.length;
         if(res.auto_posted||m.status==="APPROVED_POSTED"){ auto++; autoLines+=lines.length; cash+=lines.reduce((a,l)=>a+l.net_cents,0); }
         const d=res.deduction||{}; if(d.autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM") rec+=Number(d.expected_recovery_value_usd||0); }
@@ -523,7 +578,7 @@ function animateDashNums(){
 }
 setInterval(animateDashNums,700);
 
-const CMDK_VIEWS=[["dash","01","Dashboard"],["cases","02","Use Cases"],["upload","03","Upload Center"],["run","04","Run Reconciliation"],["ledger","05","Ledger"],["forecast","06","Forecast and Collections"],["eval","07","Evaluations"],["health","08","Agent Health"],["method","09","Methodology"],["arch","10","Architecture"],["policy","11","Policy Studio"],["product","12","Product Thinking"]];
+const CMDK_VIEWS=[["step1","01","Step 1 - Case, Ledger & Capture"],["run","02","Step 2 - 6-Agent & MILP Workbench"],["gov","03","Step 3 - Maker-Checker & Policy"],["sap","04","Step 4 - SAP BAPI & EBRR"],["mail","05","Step 5 - Outbound Mail Hub"],["score","06","Step 6 - CFO Scorecard & Forecast"],["eval","R","Evaluations (reference)"],["health","R","Agent Health (reference)"],["method","R","Methodology (reference)"],["arch","R","Architecture (reference)"],["product","R","Product Thinking (reference)"]];
 let cmdkSel=0, cmdkItems=[];
 function cmdkAll(){
   const views=CMDK_VIEWS.map(v=>({grp:"Go to",num:v[1],label:v[2],run:()=>go(v[0])}));
@@ -561,13 +616,15 @@ document.addEventListener("keydown",e=>{
 $("cmdk-in").addEventListener("input",e=>{cmdkSel=0; renderCmdk(e.target.value)});
 $("cmdk").addEventListener("click",e=>{if(e.target.id==="cmdk")closeCmdk()});
 /* ---- JD lens: the clean product look is the default; the lens restores
-   the JD mapping banners for a hiring conversation. Persisted per browser. */
+   the JD mapping banners for a hiring conversation. Remembered for the
+   session only - every new visit starts clean, banners appear only when
+   the lens is deliberately flipped on. */
 function toggleLens(){
   const off=document.body.classList.toggle("lens-off");
-  localStorage.setItem("ac-lens", off?"off":"on");
+  sessionStorage.setItem("ac-lens", off?"off":"on");
   $("lens-btn").textContent="JD LENS: "+(off?"OFF":"ON");
 }
-if(localStorage.getItem("ac-lens")==="on"){ document.body.classList.remove("lens-off"); const lb=$("lens-btn"); if(lb)lb.textContent="JD LENS: ON"; }
+if(sessionStorage.getItem("ac-lens")==="on"){ document.body.classList.remove("lens-off"); const lb=$("lens-btn"); if(lb)lb.textContent="JD LENS: ON"; }
 /* ---- First-visit bootstrap: an empty workspace greets a first-time
    visitor with a wall of dashes. Instead, load the demo case and run it
    once, for real - every number shown afterwards is counted from that
@@ -577,9 +634,8 @@ async function bootAuto(){
     if(sessionStorage.getItem("ac-empty")==="1") return;
     const ws=await refreshWorkspace(); if(!ws) return;
     if(ws.case||ws.latest_run||ws.open_invoices>0) return;
-    await api("/api/v1/cases/seed/load",{method:"POST"});
-    const ws2=await refreshWorkspace(); const pays=ws2?ws2.pending_payments:[];
-    if(pays.length){ lastRun=await api("/api/v1/batches",{method:"POST",body:JSON.stringify({idempotency_key:"bootstrap-"+Date.now(),payments:pays})}); }
+    const d=await api("/api/v1/cases/seed/load",{method:"POST"});
+    lastRun=d.run||null;
     await refreshWorkspace(); await refreshDash();
     // Settle pass: any dashboard read that was in flight from before the
     // batch has resolved by now, so one last refresh leaves every number
@@ -587,7 +643,156 @@ async function bootAuto(){
     setTimeout(async()=>{ await refreshWorkspace(); await refreshDash(); },1500);
     toast("Demo case loaded and run once - the numbers on this page are that run's real results. Reset to empty (case bar) starts clean.");
   }catch(e){}
+  finally{
+    /* First paint must be complete: Step 1 is the landing view (CURVIEW
+       starts there and its section ships active), but its loader only
+       ran on nav clicks - so the case list and the ledger sat on their
+       "Loading..." placeholders until the visitor clicked the step they
+       were already on. Run the landing loader once the workspace
+       settles, on every boot path (finally: the early returns above
+       are the common case - a returning visitor with a case loaded). */
+    if(CURVIEW==="step1"&&typeof LOADERS!=="undefined"&&LOADERS.step1){ try{ await LOADERS.step1(); }catch(e){} }
+  }
 }
 refreshDash();
 loadTenants();
 bootAuto();
+
+/* ---- v23: Outbound Mail & Dispute Hub - tabbed streams ----
+   The same four live streams as before, presented the tour way: tabs
+   with live counts, a master list, and a preview pane where the
+   selected mail is already drafted. The first dispute claim opens
+   itself on load - body, tone switcher and POD trace on screen. */
+let HUB=null, HUB_CAT="disputes", HUB_SEL={disputes:0,chases:0,settlements:0,dunning:0}, HUB_TONE="strict", MP_SEQ=0;
+const HUB_CATS=[["disputes","Dispute & Short-Pay Claims"],["chases","Exception & Unidentified Wire Inquiries"],["settlements","SAP Settlement Confirmations"],["dunning","Overdue Dunning Reminders"]];
+const HUB_TONES=[["strict","Standard Audit"],["contract","Contract Cap"],["escalate","VP Escalate"]];
+function setHubCat(c){ HUB_CAT=c; if(HUB) renderMailHub(); }
+async function loadMailHub(){
+  try{ const h=await api("/api/v1/mail/hub"); HUB=h;
+    const st=$("mail-state"); if(!st) return;
+    if(h.state==="empty"){
+      st.innerHTML=`<div class="msg"><b>No active ledger loaded.</b> Load a case or upload CSVs and the mail that case generates appears here. <button class="btn" style="margin-left:10px" onclick="loadCase('seed',this)">Load demo case</button></div>`;
+    } else if(h.state==="loaded_not_run"){
+      st.innerHTML=`<div class="msg"><b>Case loaded, not run yet.</b> Run it from Step 2 and the mail it generates appears here.</div>`;
+    } else st.innerHTML="";
+    renderMailHub(); renderHubOutbox(h);
+  }catch(e){ toast(e.message) }
+}
+function renderMailHub(){
+  const h=HUB; if(!h) return;
+  renderMailTabs(h);
+  const list=$("mail-list"), prev=$("mail-preview"); if(!list||!prev) return;
+  if(h.state!=="ready"&&h.state!=="loaded_not_run"&&h.state!=="empty"){ /* unknown states fall through to data */ }
+  if(h.state==="empty"||h.state==="loaded_not_run"){
+    list.innerHTML="<small>Nothing yet.</small>";
+    prev.innerHTML="<small>The four streams fill from the run: claims from deductions, inquiries from exceptions, confirmations from settlements, reminders from what is still open.</small>";
+    return;
+  }
+  HUB.setlDrafts=(h.settlements||[]).map(d=>h.outbox.find(m=>m.kind==="settlement_confirmation"&&m.ref_id.endsWith(":"+d.payment_id)));
+  renderMailList(); renderMailPreview();
+}
+function renderMailTabs(h){
+  const el=$("mail-tabs"); if(!el) return;
+  el.innerHTML=HUB_CATS.map(([k,label])=>`<button class="mtab ${HUB_CAT===k?"active":""}" onclick="setHubCat('${k}')">${esc(label)}<span class="cnt">${(h[k]||[]).length}</span></button>`).join("");
+}
+function mrowSel(cat,i){ HUB_SEL[cat]=i; renderMailList(); renderMailPreview(); }
+function renderMailList(){
+  const h=HUB, el=$("mail-list"); if(!el) return;
+  const cat=HUB_CAT, items=h[cat]||[];
+  if(!items.length){
+    el.innerHTML={disputes:"<small>No dispute claims in the latest run - no deduction met the expected-value rule.</small>",
+      chases:"<small>No unidentified wires in the latest run - every payment found its invoices or was stopped as a duplicate before matching.</small>",
+      settlements:"<small>No cleared payments in the latest run yet.</small>",
+      dunning:"<small>Nothing open after the run - the whole book is settled.</small>"}[cat];
+    return;
+  }
+  const row={
+    disputes:(d,i)=>`<div class="mrow ${HUB_SEL.disputes===i?"sel":""}" onclick="mrowSel('disputes',${i})"><div class="mt">${esc(d.payment_id)} - ${esc(d.payer)}</div><small>Claim ${money(d.claimed_cents)} · win probability ${d.win_probability} · expected recovery $${Number(d.expected_recovery_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</small></div>`,
+    chases:(d,i)=>`<div class="mrow ${HUB_SEL.chases===i?"sel":""}" onclick="mrowSel('chases',${i})"><div class="mt">${esc(d.payment_id)} - ${esc(d.payer||"Unknown payer")}</div><small>${money(d.amount_cents)} · ${esc(d.kind)}${d.residual_cents?` · residual ${money(d.residual_cents)}`:""}</small></div>`,
+    settlements:(d,i)=>`<div class="mrow ${HUB_SEL.settlements===i?"sel":""}" onclick="mrowSel('settlements',${i})"><div class="mt">${esc(d.payment_id)} - ${esc(d.payer)}</div><small>${money(d.net_cents)} applied · ${d.status==="AUTO_POSTED"?"auto-posted":"approved & posted"}${d.erp_document_id?` · SAP ${esc(d.erp_document_id)}`:""}</small></div>`,
+    dunning:(d,i)=>`<div class="mrow ${HUB_SEL.dunning===i?"sel":""}" onclick="mrowSel('dunning',${i})"><div class="mt">${esc(d.invoice_id)} - ${esc(d.customer)}</div><small>${money(d.gross_cents)} · ${d.due_in_days<0?Math.abs(d.due_in_days)+"d overdue":d.due_in_days===0?"due today":"in "+d.due_in_days+"d"} · ${esc(d.tone_label||"")}</small></div>`
+  };
+  el.innerHTML=items.map(row[cat]).join("");
+}
+function mpDraftShell(sendLabel){
+  return `<div id="mp-draft"><small>Drafting from the record...</small></div>`;
+}
+function renderMailPreview(){
+  const h=HUB, el=$("mail-preview"); if(!el) return;
+  const cat=HUB_CAT, items=h[cat]||[], i=HUB_SEL[cat], d=items[i];
+  MP_SEQ++;
+  if(!d){ el.innerHTML="<small>Nothing in this stream for the latest run.</small>"; return }
+  if(cat==="disputes"){
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)}</b><span>${esc(d.payer)}</span>${pill((d.reason_code||"")+" - "+(d.classification||"deduction"),"warn")}</div>
+    <p style="margin:8px 0">Claim <b>${money(d.claimed_cents)}</b> · win probability <b>${d.win_probability}</b> · expected recovery <b>$${Number(d.expected_recovery_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b> · invoices ${(d.invoices||[]).map(esc).join(", ")||"-"}</p>
+    <p>${pill(d.pod_clean?"POD trace: clean proof of delivery on file":"POD trace: proof of delivery not verified", d.pod_clean?"ok":"warn")} <small>Source: payment ${esc(d.payment_id)} and its deduction record in the latest run.</small></p>
+    <div class="tonechips">${HUB_TONES.map(([t,l])=>`<button class="tonechip ${HUB_TONE===t?"on":""}" onclick="setHubTone('${t}')">${esc(l)}</button>`).join("")}</div>
+    ${mpDraftShell()}`;
+    hubDraftDisputeInto();
+  } else if(cat==="chases"){
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)}</b><span>${esc(d.payer||"Unknown payer")}</span>${pill(d.kind,"warn")}</div>
+    <p style="margin:8px 0"><b>${money(d.amount_cents)}</b>${d.residual_cents?` · unexplained residual ${money(d.residual_cents)}`:""} · ${esc(d.recommended_action||"")}</p>
+    ${mpDraftShell()}`;
+    hubDraftChaseInto();
+  } else if(cat==="settlements"){
+    const draft=(HUB.setlDrafts||[])[i];
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)}</b><span>${esc(d.payer)}</span>${pill(d.status==="AUTO_POSTED"?"Auto-posted":"Approved & posted","ok")}</div>
+    <p style="margin:8px 0">${money(d.net_cents)} applied · invoices ${d.invoices.map(l=>esc(l.invoice_id)).join(", ")}${d.discount_cents?` · discount ${money(d.discount_cents)} applied`:""}${d.erp_document_id?` · SAP clearing document <b>${esc(d.erp_document_id)}</b>`:" · SAP document is the posting preview below"}</p>
+    ${draft?`<input class="mhto" id="mp-to" placeholder="ap@customer.com"><textarea rows="9" id="mp-text">${esc(draft.body||"")}</textarea><p style="margin:6px 0 0"><button class="btn small" onclick="hubSendCurrent(this)">Send confirmation</button> <span id="mp-mail"></span> <small>Draft generated automatically when the cash posted - subject: ${esc(draft.subject||"")}</small></p>`:`<small>No generated draft found for this payment - the SAP payload below is its posting record.</small>`}
+    <p style="margin:8px 0 0"><button class="btn small ghost" onclick="hubSapCurrent(this)">View SAP posting document</button></p><div id="mp-sap"></div>`;
+  } else {
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.invoice_id)}</b><span>${esc(d.customer)}</span>${pill(d.tone_label||"", d.tone==="escalation"?"bad":d.tone==="firm"?"warn":"info")}</div>
+    <p style="margin:8px 0">${money(d.gross_cents)} · ${d.due_in_days<0?Math.abs(d.due_in_days)+" days overdue":d.due_in_days===0?"due today":"due in "+d.due_in_days+" days"} · still open after the latest run, so it stays on the dunning list until a run or an approval settles it.</p>
+    ${mpDraftShell()}`;
+    hubDraftReminderInto();
+  }
+}
+function setHubTone(t){ HUB_TONE=t; renderMailPreview(); }
+function mpRenderDraft(r, sendLabel, srcPill){
+  const box=$("mp-draft"); if(!box) return;
+  box.innerHTML=`<input class="mhto" id="mp-to" placeholder="ap@customer.com"><textarea rows="10" id="mp-text">${esc(r.text||r.body||"")}</textarea><p style="margin:6px 0 0"><button class="btn small" onclick="hubSendCurrent(this)">${esc(sendLabel)}</button> <span id="mp-mail"></span> ${srcPill||""}</p>`;
+}
+async function hubDraftDisputeInto(){
+  const seq=MP_SEQ, d=HUB.disputes[HUB_SEL.disputes]; if(!d) return;
+  try{ const r=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"dispute_email",tone:HUB_TONE,facts:{payment_id:d.payment_id,payer:d.payer,claimed_cents:d.claimed_cents,reason_code:d.reason_code,win_probability:d.win_probability,expected_recovery_usd:d.expected_recovery_usd}})});
+    if(seq!==MP_SEQ) return;
+    mpRenderDraft(r,"Send claim",pill(r.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(r),"info"));
+  }catch(e){ const box=$("mp-draft"); if(box&&seq===MP_SEQ) box.innerHTML=`<small>Draft failed: ${esc(e.message)}</small>` }
+}
+async function hubDraftChaseInto(){
+  const seq=MP_SEQ, d=HUB.chases[HUB_SEL.chases]; if(!d) return;
+  try{ const r=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"chase_email",facts:{payment_id:d.payment_id,payer:d.payer||"Payer",amount_cents:d.amount_cents}})});
+    if(seq!==MP_SEQ) return;
+    mpRenderDraft(r,"Send inquiry",pill(r.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(r),"info"));
+  }catch(e){ const box=$("mp-draft"); if(box&&seq===MP_SEQ) box.innerHTML=`<small>Draft failed: ${esc(e.message)}</small>` }
+}
+async function hubDraftReminderInto(){
+  const seq=MP_SEQ, d=HUB.dunning[HUB_SEL.dunning]; if(!d) return;
+  try{ const r=await api("/api/v1/mail/reminder",{method:"POST",body:JSON.stringify({invoice_id:d.invoice_id})});
+    if(seq!==MP_SEQ) return;
+    HUB.dunSubj=r.subject;
+    mpRenderDraft(r,"Send reminder",`<small>${esc(r.tone_label||"")} - subject: ${esc(r.subject||"")}</small>`);
+  }catch(e){ const box=$("mp-draft"); if(box&&seq===MP_SEQ) box.innerHTML=`<small>Draft failed: ${esc(e.message)}</small>` }
+}
+function hubSendCurrent(btn){
+  const cat=HUB_CAT, i=HUB_SEL[cat], to=($("mp-to")||{}).value, text=($("mp-text")||{}).value;
+  if(!text){ toast("Nothing to send yet"); return }
+  const kind={disputes:"dispute_claim",chases:"chase",settlements:"settlement_confirmation",dunning:"collection_reminder"}[cat];
+  const item=HUB[cat][i];
+  const ref=cat==="dunning"?item.invoice_id:item.payment_id;
+  const subj=cat==="settlements"?((HUB.setlDrafts||[])[i]||{}).subject:cat==="dunning"?HUB.dunSubj:undefined;
+  sendMailGeneric(kind, ref, to, text, "mp-mail", btn, subj).then(()=>loadMailHub());
+}
+async function hubSapCurrent(btn){
+  const box=$("mp-sap"); if(!box) return;
+  if(box.dataset.done){ box.hidden=!box.hidden; return }
+  btn.disabled=true;
+  try{ const doc=await api(`/api/v1/payments/${encodeURIComponent(HUB.settlements[HUB_SEL.settlements].payment_id)}/erp-document`);
+    box.innerHTML=erpServerHtml(doc); box.dataset.done="1";
+  }catch(e){ box.innerHTML=`<small>${esc(e.message)}</small>` } finally{ btn.disabled=false }
+}
+function renderHubOutbox(h){
+  const el=$("mail-outbox"); if(!el) return;
+  const pillFor=m=>pill(m.status==="sent"?"Sent":m.status==="failed"?"Failed":m.status==="draft"?"Draft - generated":"Recorded - not sent", m.status==="sent"?"ok":m.status==="failed"?"bad":m.status==="draft"?"info":"warn");
+  el.innerHTML=(h.configured?pill("Mailbox configured","ok"):pill("No mailbox configured - sends are recorded, not sent","warn"))+(h.outbox.length?`<table><tr><th>When (UTC)</th><th>To</th><th>Subject</th><th>Kind</th><th>Status</th></tr>${h.outbox.slice(0,15).map(m=>`<tr><td>${esc((m.created_at||"").slice(5,16).replace("T"," "))}</td><td>${esc(m.to)}</td><td>${esc(m.subject)}</td><td>${esc(m.kind)}</td><td>${pillFor(m)}</td></tr>`).join("")}</table>`:"<small>Nothing generated or sent yet.</small>");
+}

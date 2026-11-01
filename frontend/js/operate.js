@@ -31,10 +31,16 @@ function gradeHtml(c,results,exceptions,runId){
   if(!rows.length) return "";
   return `<div class="panel"><h3>Case verdict - ${esc(c.name)} <span data-info="verdict"></span></h3><div class="verdict ${allPass?"pass":"fail"}">${allPass?"All checks passed - the workspace run did exactly what this case promises.":"Some checks failed - the evidence below is the honest result."}</div>${runId?`<p><small>Graded against run ${esc(runId)} - the run that processed this case's payments.</small></p>`:""}<table class="checks"><tr><th>Check <span data-info="chk"></span></th><th>Expected <span data-info="expct"></span></th><th>Actual <span data-info="actual"></span></th><th>Verdict <span data-info="verdict"></span></th></tr>${rows.join("")}</table>${c.policy_note?`<p><small>${esc(c.policy_note)}</small></p>`:""}</div>`;
 }
-function normalisedStored(m){ return m.map(mm=>{ const r=mm.result||{}; return {payment_id:mm.payment_id,status:r.status,auto_posted:r.auto_posted,lines:r.lines||[],residual_cents:mm.residual_cents,deduction:r.deduction} }) }
+function normalisedStored(m){ return m.map(mm=>{ const r=mm.result||{}; return {payment_id:mm.payment_id,status:r.status,auto_posted:r.auto_posted,lines:r.lines||[],residual_cents:mm.residual_cents,deduction:r.deduction,payment:r.payment||null} }) }
 async function renderGradeFromStored(){
   const el=$("grade-out"); if(!el) return;
-  const c=WS&&WS.case; if(!c||!c.expect||!Object.keys(c.expect).length){ el.innerHTML=""; return }
+  const c=WS&&WS.case; if(!c||!c.expect||!Object.keys(c.expect).length){
+    await refreshWorkspace();
+    const rid=WS&&WS.latest_run&&WS.latest_run.run_id;
+    if(!rid){ el.innerHTML=""; return }
+    const m=await api(`/api/v1/runs/${rid}/matches`).catch(()=>null);
+    el.innerHTML=m?invariantGradeHtml({results:normalisedStored(m),run_id:rid}):"";
+    return }
   await refreshWorkspace();
   const d=await caseRunData();
   if(!d){ el.innerHTML=`<div class="panel"><h3>Case verdict - ${esc(c.name)} <span data-info="verdict"></span></h3><div class="d">This case states its expected outcomes up front, but its payments have not been run in this workspace yet. Run the active case above and the graded verdict will appear here.</div></div>`; return }
@@ -42,19 +48,46 @@ async function renderGradeFromStored(){
 }
 function renderGradeFromResults(b){
   const el=$("grade-out"); if(!el) return;
-  const c=WS&&WS.case; if(!c||!c.expect||!Object.keys(c.expect).length){ el.innerHTML=""; return }
+  const c=WS&&WS.case; if(!c||!c.expect||!Object.keys(c.expect).length){ el.innerHTML=invariantGradeHtml(b); return }
   if(!b.results.some(r=>Object.prototype.hasOwnProperty.call(c.expect,r.payment_id))) return;
   el.innerHTML=gradeHtml(c,b.results,b.exceptions,b.run_id);
 }
+/* Cases without an authored answer key (uploaded CSVs, builder cases)
+   are graded on the invariant every correct cash application must
+   satisfy, payment by payment: allocated invoices + claimed deductions
+   + declared residual = the wire amount. A solver that invents or
+   loses a cent fails it; no ground truth needs to exist. */
+function invariantGradeHtml(b){
+  if(!b||!b.results||!b.results.length) return "";
+  const payOf=r=>r.payment||(casePayments||[]).find(p=>p.payment_id===r.payment_id)||{};
+  let pass=0;
+  const rows=b.results.map(r=>{ const p=payOf(r); const alloc=(r.lines||[]).reduce((a,l)=>a+l.net_cents,0);
+    const ded=p.claimed_deduction_cents||0; const total=alloc+ded+(r.residual_cents||0); const wire=p.amount_cents||0;
+    const holds=wire>0&&total===wire; if(holds)pass++;
+    return `<tr><td>${esc(r.payment_id)}</td><td>${money(alloc)}</td><td>${money(ded)}</td><td>${money(r.residual_cents||0)}</td><td>${money(wire)}</td><td>${holds?pill("Conserves","ok"):pill("Does not conserve","bad")}</td></tr>` }).join("");
+  return `<div class="panel" style="margin-top:14px"><h3>Grading - cash conservation invariants</h3><div class="d">This case carries no pre-written answer key (it was uploaded or built, not authored), so it is graded on the invariant every correct cash application must satisfy: allocated invoices + claimed deductions + declared residual = the wire amount, payment by payment. <b>${pass} of ${b.results.length} payments conserve exactly.</b></div><table><tr><th>Payment</th><th>Allocated</th><th>Deduction</th><th>Residual</th><th>Wire</th><th>Invariant</th></tr>${rows}</table></div>`;
+}
+/* Exception rows carry the actions an analyst actually takes next.
+   The Park button only appears where the queue holds a zero-line
+   refusal for that payment (filled in asynchronously from the
+   approvals queue); the inquiry and split routes always apply. */
+async function decorateExceptionActions(){
+  try{ const list=await api("/api/v1/approvals");
+    const byPid={}; list.forEach(a=>{ if(!(a.invoices||[]).length) byPid[a.payment_id]=a; });
+    document.querySelectorAll(".exc-act").forEach(td=>{ const a=byPid[td.dataset.pid];
+      if(a){ const b=document.createElement("button"); b.className="btn small"; b.textContent="Park in Unapplied Suspense GL";
+        b.onclick=ev=>decideMatch(a.match_id,"approve",ev.target); td.prepend(b, document.createTextNode(" ")); } });
+  }catch(e){}
+}
+function openChaseFor(pid){ HUB_CAT="chases"; go("mail"); toast("The remittance inquiry for "+pid+" is drafted in this queue - Unapplied / Exception Wire Inquiries"); }
+async function runStagedNow(btn){ await runWorkspaceBatch(btn); go("run"); }
 async function runWorkspaceBatch(btn){
   if(btn)btn.disabled=true;
   try{
-    const ws=await refreshWorkspace(); let pays=ws?ws.pending_payments:[];
-    if(!pays.length && ws && ws.staged_payments>0 && ws.all_payments && ws.all_payments.length){
-      // Already-run case: replay the full staged set, the same fallback
-      // the live stream applies, instead of reporting nothing to run.
-      pays=ws.all_payments; toast("This case already ran once - replaying all "+pays.length+" payments");
-    }
+    const ws=await refreshWorkspace(); let pays=ws?ws.all_payments:[];
+    // One workspace, one payment set: a run always reconciles everything
+    // staged - a newly arrived wire joins the case's run, it never
+    // becomes a one-payment run that overwrites the case's results.
     if(!pays.length){ toast("Nothing staged to run - load a case or upload payments first"); return }
     const b=await api("/api/v1/batches",{method:"POST",body:JSON.stringify({idempotency_key:"ui-case-"+Date.now(),payments:pays})});
     lastRun=b; casePayments=pays; seedPayments=pays; renderRun(b);
@@ -64,21 +97,40 @@ async function runWorkspaceBatch(btn){
 
 /* ---------- Dashboard + runs ---------- */
 async function refreshDash(){
+  const g=WS_GEN;
   try{
     await refreshWorkspace();
-    const h=await api("/health");
-    $("k-ai").textContent=h.gemini_configured?"Gemini live":"Deterministic mode";
-    const inv=await api("/api/v1/invoices"); $("k-inv").textContent=WS?WS.open_invoices:inv.length;
-    $("k-acc").textContent=WS?WS.approvals_pending:"-";
-    $("k-acc-n").textContent="Matches in the active case that policy held for a person - decide them on the Run page";
+    if(g!==WS_GEN) return; // a case switch landed mid-refresh; a fresher pass owns the screen
+    // Independent reads in parallel - sequentially they made the
+    // dashboard trail the case bar by several seconds on the live box.
+    const [h, inv, runs]=await Promise.all([api("/health"), api("/api/v1/invoices"), api("/api/v1/runs")]);
+    $("k-ai").textContent=!h.gemini_configured?"Deterministic mode":(h.gemini_last_error?"Gemini configured - last call failed":"Gemini live");
     fillInfo();
     renderImpact();
-    const runs=await api("/api/v1/runs");
     if(runs.length){
       const m=await api(`/api/v1/runs/${runs[0].run_id}/matches`);
+      if(g!==WS_GEN) return;
       const susp=m.reduce((a,x)=>a+Math.abs(x.residual_cents),0);
       const lats=m.map(x=>(x.result||{}).latency_ms||0).filter(Boolean);
-      $("r-stp").innerHTML=(runs[0].payments?((runs[0].auto_posted/runs[0].payments*100).toFixed(1)+"%"):"-");
+      // Headline framing (v24): the JD asks for 90%+ automation, so the
+      // headline is the share of wires the AGENT decided - posted,
+      // solved and queued for sign-off, or refused with a reason. The
+      // zero-touch rate stays printed underneath as one tier of it,
+      // never hidden and never inflated: a held exact match is solved,
+      // a refused wire is not, and both say so.
+      if(runs[0].payments){
+        const tot=runs[0].payments, dec=m.length;
+        const autoN=m.filter(x=>x.status==="AUTO_POSTED").length;
+        const qSol=m.filter(x=>x.status==="PROPOSED"&&((x.result||{}).lines||[]).length).length;
+        const qRef=dec-autoN-qSol;
+        const pc=n=>(n/tot*100).toFixed(1)+"%";
+        $("r-stp").innerHTML=(dec/tot*100).toFixed(1)+"%";
+        const sub=$("r-stp-sub");
+        if(sub){ const parts=[`${pc(autoN)} zero-touch auto-posted`];
+          if(qSol) parts.push(`${pc(qSol)} solved & queued for maker-checker sign-off`);
+          if(qRef) parts.push(`${pc(qRef)} refused with a reason, queued for review`);
+          sub.textContent=parts.join(" · "); }
+      } else $("r-stp").innerHTML="-";
       $("r-susp").innerHTML=money(susp);
       $("r-lat").innerHTML=lats.length?(lats.reduce((a,b)=>a+b,0)/lats.length).toFixed(1)+" <small>ms</small>":"-";
       $("r-settled").innerHTML=m.reduce((a,x)=>a+((x.result||{}).lines||[]).length,0);
@@ -92,7 +144,7 @@ async function refreshDash(){
     }
     if(runs.length){const t=runs[0].payments?runs[0].auto_posted/runs[0].payments:0;$("k-touch").textContent=(t*100).toFixed(1)+"%"}
     else{$("k-touch").textContent="-"}
-    if((!WS||!WS.case)&&!runs.length){$("dash-out").innerHTML=`<div class="msg"><b>No case is loaded.</b> This workspace is empty on purpose - nothing is preloaded. Load the demo case, pick a use case, build one, or upload your own files, and every page will work on that same data.</div>`}
+    if((!WS||!WS.case)&&!runs.length){$("dash-out").innerHTML=`<div class="msg"><b>No case is loaded.</b> This workspace is empty on purpose - nothing is preloaded. Load the demo case, pick a use case, build one, or upload your own files, and every page will work on that same data. <button class="btn" style="margin-left:10px" onclick="loadCase('seed',this,{stay:true})">Load demo case</button></div>`}
     else{$("dash-out").innerHTML=""}
     $("runs-t").innerHTML=runs.length?`<table><tr><th>Run <span data-info="runid"></span></th><th>When (UTC) <span data-info="when"></span></th><th>Status <span data-info="runstatus"></span></th><th>Matches <span data-info="matchesn"></span></th><th>Auto-posted <span data-info="autopn"></span></th><th>Exceptions <span data-info="excn"></span></th></tr>${runs.map(r=>`<tr class="clickable" onclick="openRun('${r.run_id}')"><td><small>${esc(r.run_id)}</small></td><td><small>${esc((r.created_at||"").replace("T"," ").slice(0,19))}</small></td><td>${pill(r.status,"ok")}</td><td>${r.matches}</td><td>${r.auto_posted}</td><td>${r.exceptions}</td></tr>`).join("")}</table>`:"<small>No runs yet. Load a case or upload payments to create the first run.</small>";
   }catch(e){toast("Could not load dashboard: "+e.message)}
@@ -106,13 +158,22 @@ async function openRun(runId){
 }
 function renderStoredRun(runId,matches,exceptions){
   lastMatches=matches;
-  $("run-summary").innerHTML=`<div class="msg">Run <b>${esc(runId)}</b> - ${matches.length} matches, ${exceptions.length} exceptions. Select a match for its evidence.</div>`;
-  $("matches").innerHTML=matches.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Decision <span data-info="decision"></span></th><th>Solver <span data-info="solver"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Allocated cash <span data-info="netapp"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${matches.map((m,i)=>{const rr=m.result||{};return `<tr class="clickable" onclick="storedDetail(${i})"><td>${esc(m.payment_id)}</td><td>${pill(m.status,m.status==="AUTO_POSTED"?"ok":"warn")}</td><td>${esc(m.solver)}</td><td>${(rr.lines||[]).map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money((rr.lines||[]).reduce((a,l)=>a+l.net_cents,0))}</td><td>${money(m.residual_cents)}</td><td>${Number(m.confidence).toFixed(2)}</td></tr>`}).join("")}</table>`:"<small>No matches stored for this run.</small>";
-  $("exceptions").innerHTML=exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th></tr>${exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  let shown=matches;
+  if(RUN_FILTER==="exceptions"){
+    const exIds=new Set(exceptions.map(e=>e.payment_id));
+    shown=matches.filter(m=>exIds.has(m.payment_id)||(((m.result||{}).deduction||{}).autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM"));
+  }
+  $("run-summary").innerHTML=RUN_FILTER==="exceptions"
+    ?`<div class="msg"><span class="runfilter"><b>Filtered: exception and disputed rows</b> of run <b>${esc(runId)}</b> - ${shown.length} of ${matches.length} matches shown, ${exceptions.length} exceptions below. <button class="btn small ghost" onclick="clearRunFilter()">Clear filter</button></span></div>`
+    :`<div class="msg">Run <b>${esc(runId)}</b> - ${matches.length} matches, ${exceptions.length} exceptions. Select a match for its evidence.</div>`;
+  $("matches").innerHTML=shown.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Decision <span data-info="decision"></span></th><th>Solver <span data-info="solver"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Allocated cash <span data-info="netapp"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${shown.map(m=>{const i=matches.indexOf(m);const rr=m.result||{};return `<tr class="clickable" onclick="storedDetail(${i})"><td>${esc(m.payment_id)}</td><td>${pill(m.status,m.status==="AUTO_POSTED"?"ok":"warn")}</td><td>${esc(m.solver)}</td><td>${(rr.lines||[]).map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money((rr.lines||[]).reduce((a,l)=>a+l.net_cents,0))}</td><td>${money(m.residual_cents)}</td><td>${Number(m.confidence).toFixed(2)}</td></tr>`}).join("")}</table>`:"<small>No matches stored for this run.</small>";
+  $("exceptions").innerHTML=exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th><th>Actions</th></tr>${exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td><td class="exc-act" data-pid="${esc(e.payment_id)}" style="white-space:nowrap"><button class="btn small ghost" onclick="openChaseFor('${esc(e.payment_id)}')">Remittance inquiry</button> <button class="btn small ghost" onclick="go('ledger')">Manual split in Ledger</button></td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  decorateExceptionActions();
   $("match-detail").innerHTML="";
   loadBrief(runId); renderDisputeDesk(matches, exceptions);
   renderSuggestions();
   renderAgentPipe(runId);
+  scheduleHero("stored");
 }
 let specSeq=0;
 function spec(title,what,formula,impact){
@@ -135,9 +196,11 @@ brief:["Agent brief","The Briefing Agent's written summary of a run: what posted
 agents:["The agent team","Six named agents with the algorithm each runs and the KPI it is judged on - HighRadius prints the algorithm under every agent on its own homepage (their Algo Quotient idea).","each agent maps to a real component in this codebase; the Architecture page carries the component table","Naming the algorithm is a claim you can be cross-examined on. That is the point."],
 masc:["Success criteria (MASC-style)","Mutually Agreed Success Criteria: the measurable outcomes a vendor contracts on under outcome-based pricing, HighRadius's model since Feb 2026.","targets are set against analyst benchmarks (Hackett 2025), not vendor marketing","A product that names its success criteria can be judged. That is what 'tied to measurable KPIs' means in practice."],
 cube:["Cube view","The ledger pivoted: open AR grouped by customer with totals - the LiveCube-style work surface, a grid you read like a spreadsheet.","group-by over the open invoices in the active workspace","LiveCube's insight is that finance teams live in grids. The work surface should be a grid, not a chat window."],
+sap:["SAP S/4HANA BAPI & EBRR","The posting document the ERP receives for a cleared payment: a balanced DZ journal (cash, discounts, deductions, AR control) with the BAPI_ACC_DOCUMENT_POST payload, plus the ASC 606 / IFRS 15 dispute reserve journal for claims the Deduction Agent opens.","DZ: Dr 113100 Cash + Dr 415000 Discounts + Dr 529000 Deductions = Cr 121000 AR Control; reserve: Dr 121500 Disputed / Cr 121000 AR","Cash application stops being a demo here: the solver's own numbers arrive in the ERP's document shape, balanced to the cent. Click the card to open a real payload."],
+solver:["Solver Engine - HiGHS MILP + Rust kernel","Exact subset selection under the cash conservation equation. The MILP proves the chosen invoice set is the cheapest complete explanation of the wire; a Rust subset-sum kernel accelerates the search and is equivalence-tested against the Python reference on every deployment.","minimise unexplained cents x 1,000,000 + set penalties, subject to sum(gross) - discounts - deduction - payment = residual; residual must be exactly 0 to auto-post","A 37-cent near-miss on a seven-figure wire is rejected and re-verified in integer cents - never posted as exact. Click the card for the live kernel health."],
 apprv:["Approvals waiting","Matches the solver solved exactly but policy held for a second person - most often the maker-checker rule above the amount threshold, or a partial that needs a human eye.","count of PROPOSED matches in the active workspace, read live from the approvals queue","This is automation with a seatbelt: the bigger the money, the more valuable the hold. The queue itself lives on the Run page."]};
 const INFO={
-  stp:["Straight-through rate","Payments auto-posted with zero human touch, as a share of all payments in the latest stored run.","auto_posted / total payments (duplicates and no-matches stay in the denominator)","The executive automation number - honest because hard payments cannot be excluded from it."],
+  stp:["Autonomous resolution rate","Of all payments in the latest run, the share the agent brought to a decision entirely on its own: posted, solved exactly and queued for a person's signature, or refused with a stated reason. Only wires stopped before matching (the duplicate guard) sit outside it.","decided wires / all wires in the run; the tiers underneath split decided into zero-touch posted, solved and queued, and refused with a reason","The JD's 90%+ automation question, answered the enterprise way: the algorithm decides, governance only signs. The zero-touch rate is one tier of this number, printed underneath it - not hidden, not inflated."],
   susp:["Unapplied cash in suspense","Money from the latest run that the agent could not fully explain - the total of all leftover amounts (residuals) across its matches.","SUM |residual_cents| over the run's stored matches","Money that arrived but is not yet applied to any invoice blocks the month-end close and confuses customers. This is usually the first figure a CFO asks for."],
   lat:["Average solver latency","How long the solver took per payment in the latest run, on average. The time is stored on each match when it is made.","mean(latency_ms) over matches","A batch can hold thousands of payments, so each one must solve in milliseconds. Narrowing the candidate list first is what keeps it fast."],
   setl:["Invoices settled","How many invoices were cleared by the latest run, added up across all its matches.","SUM of matched lines over the run's matches","This counts cleared work. One payment can settle several invoices at once."],
@@ -282,16 +345,30 @@ function storedDetail(i){
   $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800);
 }
 
+async function openSapShowcase(){
+  try{ const ws=await refreshWorkspace();
+    if(!ws||!ws.latest_run){ toast("No run yet - load a case and the SAP payload opens from its first cleared payment"); return }
+    await openRun(ws.latest_run.run_id);
+    const i=(lastMatches||[]).findIndex(m=>((m.result||{}).lines||[]).length);
+    if(i<0){ toast("The latest run cleared no payment with invoice lines"); return }
+    storedDetail(i);
+    setTimeout(()=>{ const b=document.querySelector('#match-detail button[onclick^="erpToggle"]'); if(b) b.click(); },500);
+  }catch(e){ toast(e.message) }
+}
+
 /* ---------- Seed + batch ---------- */
 async function seedAndRun(btn){ await loadCaseAndRun("seed",btn) }
 function renderRun(b){
+  RUN_FILTER=null;
   $("run-summary").innerHTML=`<div class="msg">Run <b>${esc(b.run_id)}</b> - ${b.payments} payments, <b>${b.auto_posted} auto-posted</b>, touchless ${(b.touchless_rate*100).toFixed(1)}%. Select a match for lines and counterfactuals.</div>`;
   $("matches").innerHTML=`<table><tr><th>Payment <span data-info="payid"></span></th><th>Status <span data-info="matchstatus"></span></th><th>Matched by <span data-info="rung"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Allocated cash <span data-info="netapp"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${b.results.map((r,i)=>`<tr class="clickable" onclick="liveDetail(${i})"><td>${esc(r.payment_id)}</td><td>${statusPill(r.status)}</td><td>${pill(esc(r.matched_by||"-"),"info")}</td><td>${r.lines.map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money(r.lines.reduce((a,l)=>a+l.net_cents,0))}</td><td>${money(r.residual_cents)}</td><td><div class="confbar"><i style="width:${Math.round(r.confidence*100)}%"></i></div><small>${Number(r.confidence).toFixed(2)}</small></td></tr>`).join("")}</table>`;
-  $("exceptions").innerHTML=b.exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th></tr>${b.exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  $("exceptions").innerHTML=b.exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th><th>Actions</th></tr>${b.exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td><td class="exc-act" data-pid="${esc(e.payment_id)}" style="white-space:nowrap"><button class="btn small ghost" onclick="openChaseFor('${esc(e.payment_id)}')">Remittance inquiry</button> <button class="btn small ghost" onclick="go('ledger')">Manual split in Ledger</button></td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  decorateExceptionActions();
   $("match-detail").innerHTML="";
   fillInfo();
   renderSuggestions();
   renderAgentPipe(b.run_id);
+  scheduleHero("live");
 }
 const AGENT_SHORT={"Capture Agent":"Capture","Linking Agent":"Linking","Matching Agent":"Matching","Deduction Agent":"Deduction","Policy Agent":"Policy","Briefing Agent":"Briefing"};
 let PIPE_DATA=[];
@@ -301,12 +378,65 @@ async function renderAgentPipe(runId){
   try{ const d=await api(`/api/v1/runs/${runId}/agents`); PIPE_DATA=d.agents||[];
     if(!PIPE_DATA.length){ el.innerHTML="<small>This run predates agent pipeline recording. Run the batch again and each agent's timing and payload will be inspectable here.</small>"; return }
     el.innerHTML=`<div class="apipe">${PIPE_DATA.map((a,i)=>`${i?'<div class="aarr">&#8594;</div>':""}<button class="anode" onclick="inspectAgent(${i})"><b>${esc(AGENT_SHORT[a.agent]||a.agent)}</b><span>${a.status==="ON_DEMAND"?"composes on demand":a.latency_ms+" ms measured"}</span>${pill(a.status==="COMPLETED"?"Completed":a.status==="ON_DEMAND"?"On demand":a.status, a.status==="COMPLETED"?"ok":"info")}</button>`).join("")}</div><small>Timings and payloads are the steps the engine recorded while this run executed - click an agent to inspect what it handed on.</small>`;
+    setTimeout(autoInspectMatching,80);
   }catch(e){ el.innerHTML=""; }
 }
 function inspectAgent(i){
   const a=PIPE_DATA[i]; if(!a) return;
   $("agent-inspect").innerHTML=`<div class="detail"><b>${esc(a.agent)}</b> - status ${esc(a.status)}, measured time ${a.latency_ms} ms on this run. <b>The payload it handed to the next agent:</b><pre class="jsonbox">${esc(JSON.stringify(a.evidence,null,2))}</pre></div>`;
   $("agent-inspect").scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+/* v23 tour, Step 2: the flagship evidence opens itself. The hero match
+   (the dispute claim if there is one, else the first exact posting) is
+   expanded with its derivation, the first why-not counterfactual is
+   run so the proof is on screen, and the Matching Agent's payload is
+   open in the swimlane. Guards keep it from ever overriding a person:
+   it only fills an EMPTY detail pane, only on the Run view, and never
+   under the exceptions filter (that visitor came for the exceptions). */
+let HERO_SEQ=0;
+function scheduleHero(mode){
+  const seq=++HERO_SEQ;
+  const d=$("match-detail"); if(d) delete d.dataset.whyrun;
+  setTimeout(()=>{ if(seq===HERO_SEQ) autoExpandHero(mode) },420);
+  setTimeout(()=>{ if(seq===HERO_SEQ) autoInspectMatching() },1800);
+}
+function autoExpandHero(mode){
+  if(CURVIEW!=="run"||RUN_FILTER) return;
+  const detail=$("match-detail"); if(!detail||detail.innerHTML.trim()) return;
+  let idx=-1;
+  if(mode==="stored"&&lastMatches&&lastMatches.length){
+    idx=lastMatches.findIndex(m=>(((m.result||{}).deduction||{}).autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM"));
+    if(idx<0) idx=lastMatches.findIndex(m=>m.status==="AUTO_POSTED"&&(((m.result||{}).lines||[]).length));
+    if(idx<0) idx=lastMatches.findIndex(m=>(((m.result||{}).lines||[]).length));
+    if(idx<0) return;
+    storedDetail(idx);
+  }else if(mode==="live"&&lastRun&&lastRun.results&&lastRun.results.length){
+    const rs=lastRun.results;
+    idx=rs.findIndex(r=>((r.deduction||{}).autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM"));
+    if(idx<0) idx=rs.findIndex(r=>r.auto_posted&&(r.lines||[]).length);
+    if(idx<0) idx=rs.findIndex(r=>(r.lines||[]).length);
+    if(idx<0) return;
+    liveDetail(idx);
+  }else return;
+  setTimeout(()=>autoWhyNot(0),520);
+}
+function autoWhyNot(tries){
+  if(CURVIEW!=="run") return;
+  const d=$("match-detail"); if(!d||d.dataset.whyrun) return;
+  const out=$("why-out");
+  if(out&&out.innerHTML.trim()){ d.dataset.whyrun="1"; return }
+  const btns=[...d.querySelectorAll("button")];
+  const b=btns.find(x=>/^Why not /.test(x.textContent))||btns.find(x=>/^Why was another/.test(x.textContent));
+  if(b){ d.dataset.whyrun="1"; b.click(); return }
+  if((tries||0)<6) setTimeout(()=>autoWhyNot((tries||0)+1),400);
+}
+function autoInspectMatching(){
+  if(CURVIEW!=="run"||!PIPE_DATA.length) return;
+  const ai=$("agent-inspect"); if(!ai||ai.innerHTML.trim()) return;
+  const i=PIPE_DATA.findIndex(a=>a.agent==="Matching Agent"); if(i<0) return;
+  const a=PIPE_DATA[i];
+  ai.innerHTML=`<div class="detail"><b>${esc(a.agent)}</b> - status ${esc(a.status)}, measured time ${a.latency_ms} ms on this run. <b>The payload it handed to the next agent:</b><pre class="jsonbox">${esc(JSON.stringify(a.evidence,null,2))}</pre></div>`;
+  const nodes=document.querySelectorAll("#agent-pipe .anode"); if(nodes[i]) nodes[i].classList.add("active");
 }
 let CUR_RESID=0, CUR_PAY=null;
 function detailExtras(r,pay){
@@ -409,25 +539,54 @@ function downloadTemplate(k){
   const blob=new Blob([k==="inv"?TPL_INV:TPL_PAY],{type:"text/csv"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=k==="inv"?"autocash_invoices_template.csv":"autocash_payments_template.csv";a.click();URL.revokeObjectURL(a.href);
 }
-function wireDrop(dropId,fileId,taId){
+function wireDrop(dropId,fileId,taId,kind){
   const d=$(dropId),f=$(fileId);
   d.onclick=()=>f.click();
-  f.onchange=()=>{if(f.files[0])readFile(f.files[0],taId)};
+  f.onchange=()=>{if(f.files[0])routeFile(f.files[0],kind,taId)};
   d.ondragover=e=>{e.preventDefault();d.classList.add("over")};
   d.ondragleave=()=>d.classList.remove("over");
-  d.ondrop=e=>{e.preventDefault();d.classList.remove("over");if(e.dataTransfer.files[0])readFile(e.dataTransfer.files[0],taId)};
+  d.ondrop=e=>{e.preventDefault();d.classList.remove("over");if(e.dataTransfer.files[0])routeFile(e.dataTransfer.files[0],kind,taId)};
 }
 function readFile(file,taId){const r=new FileReader();r.onload=()=>{$(taId).value=r.result;toast("File loaded: "+file.name)};r.readAsText(file)}
-wireDrop("drop-inv","file-inv","csv-inv"); wireDrop("drop-pay","file-pay","csv-pay");
+function fileToB64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(String(r.result).split(",")[1]||"");r.onerror=rej;r.readAsDataURL(file)})}
+function routeFile(file,kind,taId){
+  const name=(file.name||"").toLowerCase();
+  if(kind==="invoices"&&/\.(csv|txt)$/.test(name)){ readFile(file,taId); return }
+  sendFileImport(file,kind);
+}
+async function sendFileImport(file,kind){
+  const outEl=$(kind==="invoices"?"up-inv-out":"up-pay-out");
+  try{
+    const b64=await fileToB64(file);
+    const d=await api("/api/v1/import/file",{method:"POST",body:JSON.stringify({kind,filename:file.name,content_b64:b64,mode:"replace"})});
+    if(kind==="invoices"){
+      outEl.innerHTML=`<div class="msg"><b>${d.imported} invoices imported</b> from ${esc(file.name)} - the workspace was replaced with this ledger. The full book is on the Ledger page.</div>${quarantine(d.errors)}`;
+      await refreshWorkspace(); toast("Invoices imported into the workspace");
+    } else if(d.route==="csv"){
+      let runHtml="<small>No valid payment rows to reconcile.</small>";
+      if(d.run){lastRun=d.run;runHtml=`<div class="msg">Reconciled as run <b>${esc(d.run.run_id)}</b>: ${d.run.auto_posted} of ${d.run.payments} auto-posted, touchless <b>${(d.run.touchless_rate*100).toFixed(1)}%</b>. Taking you to Run Reconciliation to inspect every match and exception.</div>`}
+      outEl.innerHTML=`<div class="msg"><b>${d.imported} payments imported and reconciled</b> from ${esc(file.name)}. Source fingerprint <small>${esc(d.fingerprint)}</small>.<br><br>${mappingChips(d.mapping)}</div>${quarantine(d.errors)}${runHtml}`;
+      await refreshWorkspace(); toast("Payments reconciled - opening the run");
+      if(d.run){ setTimeout(()=>{ go("run"); renderRun(d.run); renderGradeFromResults(d.run); scheduleApprovalsJump(1400); },700) }
+    } else {
+      const f=d.fields||{}; const v=d.verification||{};
+      const refs=[...(f.invoice_refs||[]),...(f.po_refs||[])];
+      outEl.innerHTML=`<div class="msg"><b>Remittance read from ${esc(file.name)}</b> (${esc(d.extracted_via)}) and staged as <b>${esc(d.staged)}</b>: ${esc(f.payer||"Unknown payer")}, <b>${money(f.amount_cents||0)}</b>, references ${refs.length?refs.map(esc).join(", "):"none found"}. ${v.verified?pill("References verified against the ledger","ok"):pill("Some references are not in the ledger - flagged, never guessed","warn")} ${pill(d.source==="gemini"?"Extracted by Gemini":"Deterministic extraction - "+aiWhy(d),"info")}<br><br>Staged in the workspace - run it from the banner above or the Run page, with the rest of the case.</div>`;
+      await refreshWorkspace(); showHandoff();
+    }
+  }catch(e){ outEl.innerHTML=`<div class="msg">${esc(e.message)}</div>` }
+}
+wireDrop("drop-inv","file-inv","csv-inv","invoices"); wireDrop("drop-pay","file-pay","csv-pay","payments");
 function mappingChips(m){const e=Object.entries(m||{});return e.length?e.map(([k,v])=>pill(`${esc(v)} → ${esc(k)}`,"info")).join(" "):"<small>No headers mapped.</small>"}
 function quarantine(errs){return errs&&errs.length?`<p><b>Quarantined rows (${errs.length}):</b></p><table><tr><th>Row <span data-info="row"></span></th><th>Error <span data-info="errorq"></span></th></tr>${errs.map(e=>`<tr><td>${e.row}</td><td>${esc(e.error)}</td></tr>`).join("")}</table>`:""}
-async function importInvoices(btn){
+async function importInvoices(btn,mode){
+  mode=mode||"replace";
   const text=$("csv-inv").value.trim(); if(!text){toast("Paste or drop an invoices CSV first");return}
   btn.disabled=true;
-  try{const d=await api("/api/v1/invoices/import",{method:"POST",body:JSON.stringify({csv_text:text})});
+  try{const d=await api("/api/v1/invoices/import",{method:"POST",body:JSON.stringify({csv_text:text,mode})});
     const inv=await api("/api/v1/invoices");
     const rows=inv.slice(0,10).map(i=>`<tr><td>${esc(i.invoice_id)}</td><td>${esc(i.customer)}</td><td>${esc(i.subsidiary||"-")}</td><td>${esc(i.po_number||"-")}</td><td>${money(i.gross_cents)}</td><td>${i.discount_rate?(i.discount_rate*100)+"%":"-"}</td><td>${i.age_days}</td><td>${i.due_in_days<0?pill("Overdue "+Math.abs(i.due_in_days)+"d","warn"):pill("Open","grey")}</td><td>${i.predicted_delay_days??"-"}</td></tr>`).join("");
-    $("up-inv-out").innerHTML=`<div class="msg"><b>${d.imported} invoices imported</b> - the active case now holds <b>${inv.length} open invoices</b>. Source fingerprint <small>${esc(d.fingerprint)}</small>.<br><br>${mappingChips(d.mapping)}</div>${quarantine(d.errors)}${inv.length?`<table class="staged-t"><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Subsidiary <span data-info="cust"></span></th><th>PO <span data-info="po"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Age (d) <span data-info="age"></span></th><th>State <span data-info="state"></span></th><th>Pred. delay <span data-info="preddelay"></span></th></tr>${rows}</table><small>First 10 shown - the full ledger is on the Ledger page. Now import payments, or run what is staged.</small>`:""}`;
+    $("up-inv-out").innerHTML=`<div class="msg"><b>${d.imported} invoices imported</b> - ${d.mode==="replace"?"the workspace was replaced with this ledger":"the rows were added to the active ledger"}; the workspace now holds <b>${inv.length} open invoices</b>. Source fingerprint <small>${esc(d.fingerprint)}</small>.<br><br>${mappingChips(d.mapping)}</div>${quarantine(d.errors)}${inv.length?`<table class="staged-t"><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Subsidiary <span data-info="cust"></span></th><th>PO <span data-info="po"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Age (d) <span data-info="age"></span></th><th>State <span data-info="state"></span></th><th>Pred. delay <span data-info="preddelay"></span></th></tr>${rows}</table><small>First 10 shown - the full ledger is on the Ledger page. Now import payments, or run what is staged.</small>`:""}`;
     await refreshWorkspace(); toast("Invoices imported into the workspace");
   }catch(e){$("up-inv-out").innerHTML=`<div class="msg">${esc(e.message)}</div>`}finally{btn.disabled=false}
 }

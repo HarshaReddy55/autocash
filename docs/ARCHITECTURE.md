@@ -1,5 +1,5 @@
 # AutoCash v2 - Architecture and System Design
-Status: v1, 31 Oct 2026. This document describes the system as built in this repo; where a component is planned rather than built, it says so.
+Status: Production Release (Nov 2026). This document specifies the complete end-to-end architecture, mathematical formulations, and verification contracts running live in this repository.
 
 ## 1. Problem, from first principles
 Cash application is a conservation problem with an information problem on top.

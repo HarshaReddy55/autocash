@@ -289,8 +289,8 @@ body.lens-off .jdnote{display:none}
 .casebar .cc:first-child{flex:1 1 auto;min-width:160px}
 #cb-switch{max-width:215px}
 @media(min-width:1150px){
-  .topbar{position:fixed;top:0;left:0;bottom:0;width:212px;display:flex;flex-direction:column;overflow-y:auto;overflow-x:hidden;border-bottom:0;border-right:1px solid var(--line);padding-bottom:86px}
-  .bar1{flex-direction:column;align-items:stretch;gap:12px;padding:16px 16px 4px;width:100%}
+  .topbar{position:fixed;top:0;left:0;bottom:0;width:212px;display:flex;flex-direction:column;overflow:hidden;border-bottom:0;border-right:1px solid var(--line)}
+  .bar1{flex-direction:column;align-items:stretch;gap:12px;padding:16px 16px 4px;width:100%;flex-shrink:0}
   .bar1 .brand h1{font-size:23px}
   .bar1 .brand .sub{max-width:178px;line-height:1.5}
   .bar1r{display:flex;flex-direction:column;align-items:stretch;gap:8px;width:100%}
@@ -301,14 +301,16 @@ body.lens-off .jdnote{display:none}
   #cmdk-btn{position:static;width:100%;display:flex;align-items:center;gap:9px;border:1px solid var(--line2);border-radius:999px;padding:6px 12px;color:var(--mut);background:transparent;cursor:pointer}
   #cmdk-btn::after{content:"MENU";font:600 10.5px var(--mono);letter-spacing:.08em}
   #cmdk-btn:hover{color:#fff;border-color:var(--blue)}
-  .builtby{position:absolute;left:16px;right:16px;bottom:12px;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:2px;text-align:left}
+  .builtby{position:static;flex-shrink:0;margin:10px 16px 14px;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:2px;text-align:left}
   .builtby .ck{font:600 9.5px var(--mono);letter-spacing:.1em;color:var(--mut)}
   .builtby b{font-size:12.5px;color:#fff}
   .builtby .cs{font-size:10.5px;color:var(--mut);line-height:1.45}
-  .navrow{flex-direction:column;align-items:stretch;overflow:visible;padding:2px 10px 16px;gap:2px}
+  .navrow{flex-direction:column;align-items:stretch;overflow-y:auto;overflow-x:hidden;flex:1 1 auto;min-height:0;padding:2px 10px 16px;gap:2px}
   .navrow button{width:100%;text-align:left;justify-content:flex-start}
   .navrow .grp{display:block;margin:12px 6px 4px;border-top:1px solid var(--line);padding-top:10px}
   .navrow .grp:first-child{border-top:0;padding-top:0;margin-top:6px}
+  .rain{display:none}
+  #cmdk-btn{display:none}
   main{margin-left:212px;width:calc(100% - 212px)}
 }
 #lens-btn,#docs-btn{font:600 10.5px var(--mono);letter-spacing:.08em;background:transparent;color:var(--mut);border:1px solid var(--line2);border-radius:999px;padding:6px 12px;cursor:pointer;margin-right:14px}
@@ -335,3 +337,81 @@ body.lens-off .jdnote{display:none}
 @media(max-width:1000px){.guide.open .gbody{grid-template-columns:1fr 1fr}}
 .guide .gcol .h{font-family:var(--mono);font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.09em;color:var(--blue2);margin:8px 0 4px}
 .guide .gcol p{font-size:12.5px;line-height:1.6;color:#c3c3c9;margin:0}
+
+/* ---------- v21: connected-workflow surfaces ---------- */
+.builtby{display:none}
+@media(min-width:1150px){.builtby{display:flex}}
+.cardlink{cursor:pointer}
+.cardlink:hover{border-color:var(--blue)}
+.celllink{cursor:pointer}
+.celllink:hover .v{color:var(--blue2)}
+.btilelink{cursor:pointer}
+.btilelink:hover .bv{color:var(--blue2)}
+#forecast .grid2{align-items:start}
+#forecast table.fctab{table-layout:fixed;width:100%}
+#forecast table.fctab td,#forecast table.fctab th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mhrow{border:1px solid var(--line);background:var(--bg2);padding:12px 14px;margin:10px 0}
+.mhrow .mhhead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mhrow textarea{width:100%;margin-top:8px}
+.mhrow input.mhto{width:280px;max-width:100%;margin-top:8px}
+.runfilter{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+
+#fc table.fctab th:nth-child(1){width:10%}
+#fc table.fctab th:nth-child(2),#fc table.fctab th:nth-child(3),#fc table.fctab th:nth-child(4){width:16%}
+#fc table.fctab th:nth-child(5){width:22%}
+#fc table.fctab th:nth-child(6){width:20%}
+#col table.fctab th:nth-child(1){width:15%}
+#col table.fctab th:nth-child(2){width:20%}
+#col table.fctab th:nth-child(3){width:13%}
+#col table.fctab th:nth-child(4){width:10%}
+#col table.fctab th:nth-child(5){width:11%}
+#col table.fctab th:nth-child(6){width:11%}
+#mail-dunning table.fctab{table-layout:fixed;width:100%}
+
+/* ===== v23: platform-as-a-tour ===== */
+#stepper{position:sticky;top:8px;z-index:30;display:flex;gap:6px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);padding:8px;margin:0 0 14px}
+.stepchip{flex:1 1 150px;display:flex;align-items:center;gap:8px;background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:8px 10px;cursor:pointer;font:inherit;font-size:12px;text-align:left}
+.stepchip .sn{font-family:var(--mono);font-size:11px;border:1px solid var(--line);border-radius:50%;width:21px;height:21px;display:flex;align-items:center;justify-content:center;flex:none}
+.stepchip:hover{border-color:var(--blue)}
+.stepchip.current{border-color:var(--blue);color:var(--text);background:#2e3d5e}
+.stepchip.current .sn{background:var(--blue);color:#fff;border-color:var(--blue)}
+.stepchip.done{color:var(--text)}
+.stepchip.done .sn{background:var(--ok);border-color:var(--ok);color:#fff}
+.tourbar{position:fixed;left:0;right:0;bottom:0;z-index:60;background:#1d2a44;border-top:2px solid var(--blue);padding:10px 16px;display:flex;gap:14px;align-items:center;justify-content:space-between}
+.tourbar .tsum{font-size:13px;color:#dbe4f5}
+.tourbar .tnext{flex:none}
+.tourbar.hide{display:none}
+@media(min-width:1150px){.tourbar{left:212px}}
+main{padding-bottom:78px}
+.tourblock{margin-top:26px}
+.subhead{font-family:var(--mono);font-size:11px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--line);padding-bottom:7px;margin-bottom:12px}
+.govgrid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px;align-items:start}
+@media(max-width:1050px){.govgrid{grid-template-columns:1fr}}
+.mailtabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.mtab{background:var(--panel2);border:1px solid var(--line);color:var(--muted);padding:8px 12px;cursor:pointer;font:inherit;font-size:12.5px}
+.mtab .cnt{font-family:var(--mono);background:var(--panel);border:1px solid var(--line);padding:0 6px;margin-left:6px;font-size:11px}
+.mtab.active{border-color:var(--blue);color:var(--text);background:#2e3d5e}
+.mailpanes{display:grid;grid-template-columns:minmax(280px,400px) 1fr;gap:14px;align-items:start}
+@media(max-width:1050px){.mailpanes{grid-template-columns:1fr}}
+.mrow{border:1px solid var(--line);background:var(--panel2);padding:9px 11px;margin-bottom:8px;cursor:pointer;font-size:12.5px}
+.mrow:hover{border-color:var(--blue)}
+.mrow.sel{border-color:var(--blue);background:#2e3d5e}
+.mrow .mt{font-weight:650}
+.tonechips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.tonechip{border:1px solid var(--line);background:var(--panel2);color:var(--muted);padding:5px 10px;cursor:pointer;font:inherit;font-size:12px;border-radius:999px}
+.tonechip.on{border-color:var(--blue);color:var(--text);background:#2e3d5e}
+.scoregrid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:14px}
+@media(max-width:1050px){.scoregrid{grid-template-columns:repeat(2,1fr)}}
+.refgroup{display:contents}
+.refgroup.collapsed{display:none}
+.grp-toggle{cursor:pointer;user-select:none}
+.grp-toggle:hover{color:var(--text)}
+.anode.active{border-color:var(--blue)!important;background:#2e3d5e!important}
+.sapchip{border:1px solid var(--line);background:var(--panel2);color:var(--muted);padding:6px 11px;cursor:pointer;font:inherit;font-size:12px;margin:0 6px 8px 0}
+.sapchip.on{border-color:var(--blue);color:var(--text);background:#2e3d5e}
+@media(min-width:960px){#cmdk-btn{display:none}}
+.cb-switch{flex-basis:250px}
+.panel,.tourblock,#match-detail{scroll-margin-top:72px}
+.editcell{cursor:pointer}
+.editcell:hover{outline:1px dashed var(--blue);outline-offset:-1px}
+.editcell input,.editcell textarea{background:var(--panel2);border:1px solid var(--blue);color:var(--text);font:inherit;padding:4px 6px}

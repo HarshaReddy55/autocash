@@ -157,6 +157,25 @@ class Repository:
                         currency=r[4], po_number=r[5], discount_rate=r[6], age_days=r[7],
                         due_in_days=r[8], predicted_delay_days=r[9]) for r in rows]
 
+    def settled_invoice_ids(self):
+        """Invoices a run has already cleared: any invoice in the lines of
+        an AUTO_POSTED or APPROVED_POSTED match, across every run in this
+        workspace. The forecast and the collections queue are computed on
+        what is left after reconciliation - never on the pre-run ledger."""
+        rows = self.conn.execute(
+            "SELECT result_json FROM matches WHERE status IN ('AUTO_POSTED','APPROVED_POSTED')"
+        ).fetchall()
+        out = set()
+        for (rj,) in rows:
+            try:
+                res = json.loads(rj)
+            except Exception:
+                continue
+            for l in res.get("lines") or []:
+                if l.get("invoice_id"):
+                    out.add(l["invoice_id"])
+        return out
+
     def settle_invoices(self, invoice_ids):
         """Mark invoices settled (posted against an approved match). They
         leave the open ledger, the forecast and future candidate pools."""
@@ -223,6 +242,32 @@ class Repository:
         return {"match_id": row[0], "run_id": row[1], "payment_id": row[2],
                 "status": row[3], "result": json.loads(row[4])}
 
+    def get_invoice_row(self, invoice_id):
+        r = self.conn.execute("SELECT invoice_id, status, gross_cents, discount_rate FROM invoices WHERE invoice_id=?",
+                              (invoice_id,)).fetchone()
+        return {"invoice_id": r[0], "status": r[1], "gross_cents": r[2], "discount_rate": r[3]} if r else None
+
+    def update_invoice_fields(self, invoice_id, gross_cents=None, discount_rate=None):
+        """LiveCube inline edit. Only OPEN invoices can change - a settled
+        invoice is part of a posted document and is immutable here."""
+        sets, vals = [], []
+        if gross_cents is not None: sets.append("gross_cents=?"); vals.append(gross_cents)
+        if discount_rate is not None: sets.append("discount_rate=?"); vals.append(discount_rate)
+        if not sets: return False
+        vals.append(invoice_id)
+        cur = self._x(f"UPDATE invoices SET {', '.join(sets)} WHERE invoice_id=? AND status='OPEN'", tuple(vals))
+        return cur.rowcount > 0
+
+    def update_payment_fields(self, payment_id, amount_cents=None, remittance_text=None, references=None):
+        sets, vals = [], []
+        if amount_cents is not None: sets.append("amount_cents=?"); vals.append(amount_cents)
+        if remittance_text is not None: sets.append("remittance_text=?"); vals.append(remittance_text)
+        if references is not None: sets.append("references_json=?"); vals.append(json.dumps(list(references)))
+        if not sets: return False
+        vals.append(payment_id)
+        cur = self._x(f"UPDATE payments SET {', '.join(sets)} WHERE payment_id=?", tuple(vals))
+        return cur.rowcount > 0
+
     def update_match(self, match_id, status, result):
         self._x("UPDATE matches SET status=?, result_json=? WHERE match_id=?",
                 (status, json.dumps(result), match_id))
@@ -247,10 +292,10 @@ class Repository:
         return cur.lastrowid
     def list_outbox(self, limit=50):
         rows = self.conn.execute(
-            "SELECT id, to_addr, subject, kind, ref_id, status, detail, created_at FROM outbox "
+            "SELECT id, to_addr, subject, body, kind, ref_id, status, detail, created_at FROM outbox "
             "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-        return [{"id": r[0], "to": r[1], "subject": r[2], "kind": r[3], "ref_id": r[4],
-                 "status": r[5], "detail": r[6], "created_at": r[7]} for r in rows]
+        return [{"id": r[0], "to": r[1], "subject": r[2], "body": r[3], "kind": r[4],
+                 "ref_id": r[5], "status": r[6], "detail": r[7], "created_at": r[8]} for r in rows]
 
     def audit_list(self, limit=100):
         rows = self.conn.execute(

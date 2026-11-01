@@ -210,6 +210,14 @@ def answer(repo, question, delay_model=None):
         return {"answer": "No open exceptions in the latest run.",
                 "citations": [f"run:{run_id}"], "action": None}
 
+    # --- auto-posted cash ---
+    if "cash" in q and ("auto" in q or "posted" in q or "applied" in q):
+        posted = [m for m in matches if m["status"] in ("AUTO_POSTED", "APPROVED_POSTED")]
+        cash = sum(sum(l.get("net_cents", 0) for l in (m["result"] or {}).get("lines", [])) for m in posted)
+        return {"answer": f"Auto-posted cash in the latest run: {_usd(cash)}, across "
+                          f"{len(posted)} payment(s) that posted with no human touch.",
+                "citations": [f"run:{run_id}"] + [f"match:{m['payment_id']}" for m in posted[:6]], "action": None}
+
     # --- touchless ---
     if "touchless" in q or "automation" in q:
         auto = sum(1 for x in matches if x["status"] == "AUTO_POSTED")
@@ -235,7 +243,7 @@ def answer(repo, question, delay_model=None):
                 "citations": [], "action": {"tool": "run_batch", "requires_confirmation": True, "args": {}}}
 
     # --- grounded refusal: say what the records CAN answer right now ---
-    can = ["the touchless rate", "the exceptions"]
+    can = ["the auto-posted cash", "the touchless rate", "the exceptions"]
     held = [m for m in matches if m["status"] != "AUTO_POSTED"
             and (m["result"] or {}).get("status") != "NO_MATCH"]
     if held:

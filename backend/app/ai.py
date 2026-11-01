@@ -11,6 +11,12 @@ import httpx
 # GEMINI_MODEL overrides it without a code change.
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.8-flash")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+# 6s proved too tight from the production container: on 1 Nov 2026 the
+# live /health recorded ReadTimeout on every Gemini call (the model name
+# was accepted, generation simply did not return inside 6s from that
+# network path). 20s keeps a slow answer usable; the deterministic
+# fallback still covers a genuine outage. GEMINI_TIMEOUT_S overrides.
+GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "20"))
 PARSE_SCHEMA_HINT = ('Return ONLY JSON with keys: payer (string), amount_cents (int), '
                      'invoice_refs (list of strings), po_refs (list of strings), '
                      'deduction_cents (int), deduction_reason (string)')
@@ -49,7 +55,7 @@ class GeminiClient:
         if self.transport is not None:
             resp = self.transport(payload)
             return resp["candidates"][0]["content"]["parts"][0]["text"]
-        with httpx.Client(timeout=6) as c:
+        with httpx.Client(timeout=GEMINI_TIMEOUT_S) as c:
             r = c.post(GEMINI_URL, headers={"x-goog-api-key": self.api_key,
                                             "Content-Type": "application/json"}, json=payload)
             r.raise_for_status()
@@ -60,7 +66,10 @@ class GeminiClient:
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"responseMimeType": "application/json", "temperature": 0}}
         try:
-            return json.loads(self._call(payload))
+            out = json.loads(self._call(payload))
+            LAST_GEMINI_ERROR["error"] = None
+            LAST_GEMINI_ERROR["at"] = int(time.time())
+            return out
         except Exception as e:
             _record_gemini_error(e)
             raise
@@ -70,7 +79,10 @@ class GeminiClient:
         payload = {"contents": [{"parts": [{"text": prompt}]}],
                    "generationConfig": {"temperature": 0.2}}
         try:
-            return self._call(payload)
+            out = self._call(payload)
+            LAST_GEMINI_ERROR["error"] = None
+            LAST_GEMINI_ERROR["at"] = int(time.time())
+            return out
         except Exception as e:
             _record_gemini_error(e)
             raise
@@ -114,10 +126,20 @@ AI_BUDGET = AiBudget()
 INV_RE = re.compile(r"\bINV[- ]?\d+\b", re.I)
 PO_RE = re.compile(r"\bPO[- ]?\d+\b", re.I)
 AMT_RES = [re.compile(r"\$\s*([0-9,]+(?:\.[0-9]{1,2})?)"),
-           re.compile(r"(?:USD|INR|Rs\.?)\s*([0-9,]+(?:\.[0-9]{1,2})?)", re.I),
+           re.compile(r"\b(?:USD|INR|Rs\.?)\s*([0-9,]+(?:\.[0-9]{1,2})?)", re.I),
            re.compile(r"\b([0-9,]+\.[0-9]{2})\b")]
 
-def _cents(s): return int(round(float(s.replace(",", "")) * 100))
+def _cents(s):
+    # Never raise: a regex can hand back a fragment with no digits at
+    # all (the Rs branch once matched the 'rs,' inside 'dollars,' and
+    # passed a bare comma, crashing the fallback parser with a 500).
+    t = (s or "").replace(",", "").strip()
+    if not any(ch.isdigit() for ch in t):
+        return 0
+    try:
+        return int(round(float(t) * 100))
+    except ValueError:
+        return 0
 
 def deterministic_parse(text):
     invs = sorted(set(m.group(0).upper().replace(" ", "-") for m in INV_RE.finditer(text)))
@@ -149,30 +171,56 @@ def deterministic_parse(text):
 
 def verify_parse(parsed, known_invoice_ids, known_po_numbers):
     issues = []
+    unknown_refs = []
     for ref in parsed.get("invoice_refs", []):
         if known_invoice_ids and ref not in known_invoice_ids:
             issues.append(f"invoice reference {ref} not found in open ledger")
+            unknown_refs.append(ref)
     for ref in parsed.get("po_refs", []):
         if known_po_numbers and ref not in known_po_numbers:
             issues.append(f"PO reference {ref} not found in open ledger")
     if not parsed.get("amount_cents"):
         issues.append("no payment amount extracted")
-    return {"verified": len(issues) == 0, "issues": issues}
+    return {"verified": len(issues) == 0, "issues": issues,
+            "unknown_refs": unknown_refs}
+
+
+def amounts_for_refs(text, refs):
+    """Per-reference dollar amounts, when the remittance itself lists
+    them (one ref per line with an amount, the common lockbox layout).
+    Returns {ref: cents} for the refs it could price - a ref with no
+    amount near it in the text is absent, never guessed."""
+    out = {}
+    lines = (text or "").splitlines()
+    for ref in refs:
+        pat = re.compile(re.escape(ref), re.I)
+        amt_re = re.compile(r"\$\s*([\d,]+\.\d{2})|([\d,]+\.\d{2})\s*(?:USD|dollars)", re.I)
+        for ln in lines:
+            if pat.search(ln):
+                m = amt_re.search(ln)
+                if m:
+                    out[ref] = int(round(float((m.group(1) or m.group(2)).replace(",", "")) * 100))
+                    break
+    return out
 
 def parse_remittance(text, known_invoice_ids=None, known_po_numbers=None, client=None):
     client = client or GeminiClient()
     source, degraded, fields = "deterministic", False, None
+    ai_state = "no_key"
     if client.available:
+        ai_state = "call_failed"
         try:
             out = client.generate_json(f"Extract remittance fields from this text. {PARSE_SCHEMA_HINT}\n\nTEXT:\n{text}")
             required = {"payer", "amount_cents", "invoice_refs", "po_refs", "deduction_cents", "deduction_reason"}
             if not required.issubset(set(out.keys())):
                 raise ValueError("schema incomplete")
             fields, source = out, "gemini"
+            ai_state = "gemini"
         except Exception as e:
             fields, degraded = deterministic_parse(text), True
             source = "deterministic_fallback"
     else:
         fields, degraded = deterministic_parse(text), True
     v = verify_parse(fields, known_invoice_ids or set(), known_po_numbers or set())
-    return {"fields": fields, "source": source, "degraded": degraded, "verification": v}
+    return {"fields": fields, "source": source, "degraded": degraded,
+            "ai_state": ai_state, "verification": v}

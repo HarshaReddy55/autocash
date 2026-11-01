@@ -13,7 +13,9 @@ def test_case_load_makes_one_shared_workspace():
     ws = out["workspace"]
     assert ws["case"]["id"] == "split-exact"
     assert ws["open_invoices"] == 18
-    assert len(ws["pending_payments"]) == 12
+    # v21: loading runs the case in the same call - nothing stays pending
+    assert len(ws["pending_payments"]) == 0 and ws["latest_run"] is not None
+    assert out["run"]["payments"] == 12
     # every view reads the same workspace
     invs = c.get("/api/v1/invoices").json()
     assert {"S1-INV-1", "S1-INV-2", "S1-INV-3"} <= {i["invoice_id"] for i in invs}
@@ -33,7 +35,7 @@ def test_load_replaces_previous_case():
     c.post("/api/v1/cases/duplicate-guard/load")
     ws = c.get("/api/v1/workspace").json()
     assert ws["case"]["id"] == "duplicate-guard" and ws["open_invoices"] == 16
-    assert len(ws["pending_payments"]) == 13
+    assert len(ws["pending_payments"]) == 0 and ws["latest_run"] is not None
 
 def test_reset_empties_workspace():
     c.post("/api/v1/cases/seed/load")
@@ -59,7 +61,7 @@ def test_custom_case_loads_into_workspace():
                      {"invoice_id": "C-2", "customer": "Apex Manufacturing", "gross_cents": 20000, "po_number": "PO-2", "age_days": 10}],
         "payments": [{"payment_id": "C-P1", "payer_raw": "Apex Manufacturing", "amount_cents": 50000}]}).json()
     ws = out["workspace"]
-    assert ws["case"]["id"] == "custom" and ws["open_invoices"] == 2 and len(ws["pending_payments"]) == 1
+    assert ws["case"]["id"] == "custom" and ws["open_invoices"] == 2 and len(ws["pending_payments"]) == 0
     b = c.post("/api/v1/batches", json={"idempotency_key": "ws-custom-1", "payments": out["payments"]}).json()
     assert {l["invoice_id"] for l in b["results"][0]["lines"]} == {"C-1", "C-2"}
 

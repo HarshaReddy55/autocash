@@ -1,0 +1,62 @@
+"""v20: AI source labels must say WHY the backup answered, and the
+copilot must answer the most obvious money question. Live evidence
+(1 Nov 2026): the dispute desk labelled its template draft 'Gemini not
+configured' while a key WAS configured and the call had timed out -
+three different states blurred into one wrong label. And the copilot
+refused 'What is the auto-posted cash for this case?' although the
+figure sits in the run records it reads."""
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+os.environ.setdefault("AUTOCASH_DATA_DIR", os.path.join(os.path.dirname(__file__), "api_data"))
+import httpx
+import ai as ai_mod
+import api as api_mod
+from fastapi.testclient import TestClient
+
+client = TestClient(api_mod.app, raise_server_exceptions=False)
+
+
+def _hanging_client():
+    def hang(payload):
+        raise httpx.ReadTimeout("The read operation timed out",
+                                request=httpx.Request("POST", "https://x"))
+    return ai_mod.GeminiClient(api_key="test-key", transport=hang)
+
+
+def test_draft_ai_state_distinguishes_failure_from_no_key(monkeypatch):
+    monkeypatch.setattr(api_mod, "GeminiClient", lambda *a, **k: _hanging_client())
+    r = client.post("/api/v1/ai/draft", json={
+        "kind": "dispute_email", "tone": "firm",
+        "facts": {"payer": "Northgate Foods", "payment_id": "P3",
+                  "claimed_cents": 215000, "reason_code": "RC-02"}})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["source"] == "template" and d["ai_state"] == "call_failed"
+    monkeypatch.setattr(api_mod, "GeminiClient",
+                        lambda *a, **k: ai_mod.GeminiClient(api_key=""))
+    r = client.post("/api/v1/ai/draft", json={
+        "kind": "dispute_email", "tone": "firm",
+        "facts": {"payer": "Northgate Foods", "payment_id": "P3",
+                  "claimed_cents": 215000, "reason_code": "RC-02"}})
+    assert r.json()["ai_state"] == "no_key"
+
+
+def test_brief_ai_state_under_hanging_gemini(monkeypatch):
+    client.post("/api/v1/workspace/reset")
+    b = client.post("/api/v1/cases/seed/load").json()["run"]  # v21: load runs it
+    monkeypatch.setattr(api_mod, "GeminiClient", lambda *a, **k: _hanging_client())
+    r = client.get(f"/api/v1/runs/{b['run_id']}/brief")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["source"] == "deterministic" and d["ai_state"] == "call_failed"
+
+
+def test_copilot_answers_auto_posted_cash():
+    client.post("/api/v1/workspace/reset")
+    client.post("/api/v1/cases/seed/load")
+    r = client.post("/api/v1/copilot", json={
+        "question": "What is the auto-posted cash for this case?"})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert "$411,800.00" in d["answer"], d["answer"]
+    assert d["citations"]

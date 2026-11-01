@@ -8,14 +8,68 @@ async function loadLedger(){
     $("l-count").textContent=inv.length;
     $("l-total").textContent=money(inv.reduce((a,i)=>a+i.gross_cents,0));
     $("l-over").textContent=money(inv.filter(i=>i.due_in_days<0).reduce((a,i)=>a+i.gross_cents,0));
-    $("ledger-t").innerHTML=inv.length?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Subsidiary <span data-info="cust"></span></th><th>PO <span data-info="po"></span></th><th>Amount <span data-info="amt"></span></th><th>Discount <span data-info="disc"></span></th><th>Age (d) <span data-info="age"></span></th><th>Due in (d) <span data-info="due"></span></th><th>Pred. delay <span data-info="preddelay"></span></th><th>Expected in</th><th>State <span data-info="state"></span></th></tr>${inv.map(i=>{const d=fmap[i.invoice_id];const risk=d&&(d.expected_in_days>45||d.prob_within_horizon<0.5);return `<tr><td>${esc(i.invoice_id)}</td><td>${esc(i.customer)}</td><td>${esc(i.subsidiary||"-")}</td><td>${esc(i.po_number||"-")}</td><td>${money(i.gross_cents)}</td><td>${i.discount_rate? (i.discount_rate*100)+"%":"-"}</td><td>${i.age_days}</td><td>${i.due_in_days}</td><td>${d?d.predicted_delay_days+"d":"-"}</td><td>${d?(d.expected_week?(d.expected_in_days<=0?"Due now":Math.round(d.expected_in_days)+"d")+" - Wk "+d.expected_week:"Beyond 8 wks"):"-"}</td><td>${i.due_in_days<0?pill("Overdue "+Math.abs(i.due_in_days)+"d","warn"):pill("Open","grey")}${risk?" "+pill("At risk","bad"):""}</td></tr>`}).join("")}</table>`:"<small>The ledger is empty. Load a case or import invoices from the Upload Center.</small>";
+    LEDGER_INVS=inv;
+    $("ledger-t").innerHTML=inv.length?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Subsidiary <span data-info="cust"></span></th><th>PO <span data-info="po"></span></th><th>Amount <span data-info="amt"></span></th><th>Discount <span data-info="disc"></span></th><th>Age (d) <span data-info="age"></span></th><th>Due in (d) <span data-info="due"></span></th><th>Pred. delay <span data-info="preddelay"></span></th><th>Expected in</th><th>State <span data-info="state"></span></th></tr>${inv.map((i,ix)=>{const d=fmap[i.invoice_id];const risk=d&&(d.expected_in_days>45||d.prob_within_horizon<0.5);return `<tr><td>${esc(i.invoice_id)}</td><td>${esc(i.customer)}</td><td>${esc(i.subsidiary||"-")}</td><td>${esc(i.po_number||"-")}</td><td class="editcell" title="Click to correct this invoice's amount in place" onclick="editInvAmount(${ix},this)">${money(i.gross_cents)}</td><td class="editcell" title="Click to correct the discount % in place" onclick="editInvDiscount(${ix},this)">${i.discount_rate? (i.discount_rate*100)+"%":"-"}</td><td>${i.age_days}</td><td>${i.due_in_days}</td><td>${d?d.predicted_delay_days+"d":"-"}</td><td>${d?(d.expected_week?(d.expected_in_days<=0?"Due now":Math.round(d.expected_in_days)+"d")+" - Wk "+d.expected_week:"Beyond 8 wks"):"-"}</td><td>${i.due_in_days<0?pill("Overdue "+Math.abs(i.due_in_days)+"d","warn"):pill("Open","grey")}${risk?" "+pill("At risk","bad"):""}</td></tr>`}).join("")}</table><small>LiveCube grid: click an Amount or Discount % cell to correct it in place, then re-run the solver from the staged payments panel below. An invoice a posted match already settled refuses the edit - that refusal is the control.</small>`:"<small>The ledger is empty. Load a case or import invoices from the Upload Center.</small>";
     renderCube(inv);
+    renderLedgerStaged();
   }catch(e){toast(e.message)}
 }
+async function renderLedgerStaged(){
+  const el=$("ledger-staged"); if(!el) return;
+  const ws=WS||await refreshWorkspace(); if(!ws){ el.innerHTML="<small>No workspace.</small>"; return }
+  const pays=ws.all_payments||[];
+  if(!pays.length){ el.innerHTML="<small>Nothing staged. Load a case or import payments in the Upload Center and they appear here, ready to run.</small>"; return }
+  const pend=new Set((ws.pending_payments||[]).map(p=>p.payment_id));
+  LEDGER_PAYS=pays;
+  el.innerHTML=`<table class="staged-t"><tr><th>Payment</th><th>Payer</th><th>Amount</th><th>References</th><th>Remittance text</th><th>State</th></tr>${pays.map((p,ix)=>`<tr><td>${esc(p.payment_id)}</td><td>${esc(p.payer_raw)}</td><td class="editcell" title="Click to correct this wire's amount in place" onclick="editPayAmount(${ix},this)">${money(p.amount_cents)}</td><td class="editcell" title="Click to correct the references in place" onclick="editPayRefs(${ix},this)">${(p.references||[]).map(esc).join(", ")||"<small>none</small>"}</td><td class="editcell" title="Click to correct the remittance text - on save, its references are re-extracted from the text" onclick="editPayRemit(${ix},this)"><small>${esc((p.remittance_text||"").slice(0,90))||"<small>none</small>"}</small></td><td>${pend.has(p.payment_id)?pill("Staged - waiting to run","warn"):pill("Run - results on the Run page","ok")}</td></tr>`).join("")}</table>${LEDGER_DIRTY?`<p><button class="btn" onclick="updateAndRerun(this)">Update &amp; Re-Run Solver</button> <small>${LEDGER_DIRTY} edit(s) saved to the ledger - the matches still reflect the old values until you re-run.</small></p>`:""}<small>${pays.length} payments in the active case: ${pend.size} waiting to run, ${pays.length-pend.size} already run. Click an Amount, References or Remittance cell to correct it in place; a payment a posted match settled refuses the edit.</small>`;
+}
+/* ---- v25: LiveCube inline editing ----
+   Click a value, correct it, save. The save goes to the PATCH endpoints
+   (which refuse settled records), the grid re-renders, and the Re-Run
+   bar appears: matches recompute only when the solver re-runs, and the
+   UI says so rather than pretending the edit changed history. */
+let LEDGER_DIRTY=0, LEDGER_INVS=[], LEDGER_PAYS=[];
+function cellEdit(td, value, save, area){
+  if(td.dataset.editing) return; td.dataset.editing="1";
+  const old=td.innerHTML; td.innerHTML="";
+  const inp=document.createElement(area?"textarea":"input");
+  inp.value=value; inp.style.width=area?"280px":"120px"; if(area) inp.rows=3;
+  const saveB=document.createElement("button"); saveB.className="btn small"; saveB.textContent="Save";
+  const cxB=document.createElement("button"); cxB.className="btn small ghost"; cxB.textContent="Cancel";
+  td.append(inp, document.createTextNode(" "), saveB, document.createTextNode(" "), cxB);
+  inp.focus(); if(inp.select) inp.select();
+  cxB.onclick=ev=>{ ev.stopPropagation(); td.innerHTML=old; delete td.dataset.editing; };
+  saveB.onclick=async ev=>{ ev.stopPropagation(); saveB.disabled=true;
+    try{ await save(inp.value); LEDGER_DIRTY++; toast("Saved to the ledger. Re-run the solver to recompute the matches on the corrected values."); delete td.dataset.editing; loadLedger(); }
+    catch(e){ toast("Edit refused: "+e.message); td.innerHTML=old; delete td.dataset.editing; } };
+}
+function editInvAmount(ix,td){ const i=LEDGER_INVS[ix]; if(!i) return;
+  cellEdit(td,(i.gross_cents/100).toFixed(2), async v=>{ const c=Math.round(parseFloat(v)*100); if(!(c>0)) throw new Error("amount must be positive");
+    await api(`/api/v1/invoices/${encodeURIComponent(i.invoice_id)}`,{method:"PATCH",body:JSON.stringify({gross_cents:c})}); }); }
+function editInvDiscount(ix,td){ const i=LEDGER_INVS[ix]; if(!i) return;
+  cellEdit(td, String(Math.round((i.discount_rate||0)*1000)/10), async v=>{ const p=parseFloat(v); if(isNaN(p)||p<0||p>90) throw new Error("discount must be between 0 and 90 percent");
+    await api(`/api/v1/invoices/${encodeURIComponent(i.invoice_id)}`,{method:"PATCH",body:JSON.stringify({discount_rate:p/100})}); }); }
+function editPayAmount(ix,td){ const p=LEDGER_PAYS[ix]; if(!p) return;
+  cellEdit(td,(p.amount_cents/100).toFixed(2), async v=>{ const c=Math.round(parseFloat(v)*100); if(!(c>0)) throw new Error("amount must be positive");
+    await api(`/api/v1/payments/${encodeURIComponent(p.payment_id)}`,{method:"PATCH",body:JSON.stringify({amount_cents:c})}); }); }
+function editPayRefs(ix,td){ const p=LEDGER_PAYS[ix]; if(!p) return;
+  cellEdit(td,(p.references||[]).join(", "), async v=>{ const refs=v.split(",").map(s=>s.trim()).filter(Boolean);
+    await api(`/api/v1/payments/${encodeURIComponent(p.payment_id)}`,{method:"PATCH",body:JSON.stringify({references:refs})}); }); }
+function editPayRemit(ix,td){ const p=LEDGER_PAYS[ix]; if(!p) return;
+  cellEdit(td,p.remittance_text||"", async v=>{ await api(`/api/v1/payments/${encodeURIComponent(p.payment_id)}`,{method:"PATCH",body:JSON.stringify({remittance_text:v})}); }, true); }
+async function updateAndRerun(btn){ LEDGER_DIRTY=0; await runStagedNow(btn); }
 let FC=null;
 async function loadForecast(){ fillInfo(); renderFcDisputes();
   try{const f=await api("/api/v1/forecast");const c=await api("/api/v1/collections");
-    if(!f.weeks||!f.weeks.length){$("fc").innerHTML="<small>No open invoices yet. Load a case or import invoices first.</small>";$("col").innerHTML="";$("fc-cust").innerHTML="";return}
+    const stEl=$("fc-state");
+    if(f.state==="empty"||f.state==="loaded_not_run"){
+      if(stEl) stEl.innerHTML=`<div class="msg">${f.state==="empty"?"<b>No active ledger loaded.</b> Load a case or upload CSVs to compute cash forecast.":"<b>Case loaded, not run yet.</b> The forecast computes from the post-reconciliation ledger - run the case and this page fills in."}</div>`;
+      $("fc").innerHTML=""; $("col").innerHTML=""; $("fc-cust").innerHTML=""; $("fc-drill").innerHTML="";
+      ["fc-k-open","fc-k-30","fc-k-hz","fc-k-risk"].forEach(id=>{const e=$(id); if(e)e.textContent="-"});
+      return;
+    }
+    if(stEl) stEl.innerHTML="";
+    if(!f.weeks||!f.weeks.length){$("fc").innerHTML="<small>Every invoice in the book is settled - nothing left to forecast.</small>";$("col").innerHTML="";$("fc-cust").innerHTML="";return}
     FC=f;
     const s=f.summary||{};
     $("fc-k-open").textContent=money(s.open_ar_cents||0);
@@ -32,13 +86,13 @@ async function loadForecast(){ fillInfo(); renderFcDisputes();
     const line=pts.map(p=>p.join(",")).join(" ");
     const beyondRow=f.beyond&&f.beyond.count?`<tr><td><a href="#" onclick="fcDrill(0);return false">Beyond week 8</a></td><td colspan="3"><small>Expected after the horizon - counted in Open receivables, not in the weekly bands.</small></td><td><b>${money(f.beyond.cents)}</b></td><td>-</td><td>${f.beyond.count} - view</td></tr>`:"";
     $("fc").innerHTML=`<svg viewBox="0 0 640 220" style="width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:0"><polygon class="fband" points="${band}" fill="#3d75e8" opacity="0.22"></polygon><polyline class="fdraw" pathLength="1" points="${line}" fill="none" stroke="#7fa6f2" stroke-width="2.5"></polyline>${pts.map((p,i)=>`<circle class="fdot" style="animation-delay:${0.75+i*0.12}s" cx="${p[0]}" cy="${p[1]}" r="4" fill="#3d75e8"></circle><text x="${p[0]-16}" y="212" font-size="11" fill="#a7a49d">Week ${i+1}</text>`).join("")}</svg>
-    <table><tr><th>Week <span data-info="week"></span></th><th>P10 (cautious) <span data-info="p10"></span></th><th>P50 (expected) <span data-info="p50"></span></th><th>P90 (optimistic) <span data-info="p90"></span></th><th>Cumulative P50</th><th>Invoices</th></tr>${f.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.p10_cents)}</td><td><b>${money(w.p50_cents)}</b></td><td>${money(w.p90_cents)}</td><td>${money(w.cumulative_p50_cents)}</td><td>${w.invoice_ids.length?`<a href="#" onclick="fcDrill(${w.week});return false">${w.invoice_ids.length} - view</a>`:"0"}</td></tr>`).join("")}${beyondRow}</table><p><small>Band = P10 to P90 across 400 simulated payment timings per invoice from the delay model (each invoice lands whole in one week per simulation). Click a week's invoice count to see exactly which invoices build that week. Horizon ${f.horizon_days} days.</small></p>`;
+    <table class="fctab"><tr><th>Week <span data-info="week"></span></th><th>P10 (cautious) <span data-info="p10"></span></th><th>P50 (expected) <span data-info="p50"></span></th><th>P90 (optimistic) <span data-info="p90"></span></th><th>Cumulative P50</th><th>Invoices</th></tr>${f.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.p10_cents)}</td><td><b>${money(w.p50_cents)}</b></td><td>${money(w.p90_cents)}</td><td>${money(w.cumulative_p50_cents)}</td><td>${w.invoice_ids.length?`<a href="#" onclick="fcDrill(${w.week});return false">${w.invoice_ids.length} - view</a>`:"0"}</td></tr>`).join("")}${beyondRow}</table><p><small>Band = P10 to P90 across 400 simulated payment timings per invoice from the delay model (each invoice lands whole in one week per simulation). Click a week's invoice count to see exactly which invoices build that week. Horizon ${f.horizon_days} days.</small></p>`;
     $("fc-drill").innerHTML="";
     $("fc-cust").innerHTML=(f.customers||[]).length?`<table><tr><th>Customer</th><th>Invoices</th><th>Open</th><th>Overdue</th><th>Expected 30d</th><th>Expected 8 wks</th><th>Avg pred. delay</th></tr>${f.customers.map(r=>`<tr><td>${esc(r.customer)}</td><td>${r.invoices}</td><td>${money(r.open_cents)}</td><td>${money(r.overdue_cents)}</td><td>${money(r.expected_30_cents)}</td><td>${money(r.expected_horizon_cents)}</td><td>${r.avg_predicted_delay_days}d</td></tr>`).join("")}</table>`:"<small>No customers.</small>";
     const sel=$("wi-cust"); const cur=sel.value;
     sel.innerHTML=(f.customers||[]).map(r=>`<option value="${esc(r.customer)}">${esc(r.customer)}</option>`).join("");
     if(cur)sel.value=cur;
-    $("col").innerHTML=c.length?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Amount <span data-info="amt"></span></th><th>Overdue <span data-info="overdue"></span></th><th>Pred. delay <span data-info="preddelay"></span></th><th>Priority <span data-info="prio"></span></th><th></th></tr>${c.map(r=>`<tr><td>${esc(r.invoice_id)}</td><td>${esc(r.customer)}</td><td>${money(r.gross_cents)}</td><td>${r.overdue_days}d</td><td>${r.predicted_delay_days}d</td><td><b>${r.priority_score}</b></td><td><button class="mini" onclick="draftReminder('${esc(r.invoice_id)}','${esc(r.customer)}',${r.gross_cents},${r.overdue_days})">Draft reminder</button></td></tr>`).join("")}</table>`:"<small>Nothing to collect.</small>";
+    $("col").innerHTML=c.length?`<table class="fctab"><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Amount <span data-info="amt"></span></th><th>Overdue <span data-info="overdue"></span></th><th>Pred. delay <span data-info="preddelay"></span></th><th>Priority <span data-info="prio"></span></th><th></th></tr>${c.map(r=>`<tr><td>${esc(r.invoice_id)}</td><td>${esc(r.customer)}</td><td>${money(r.gross_cents)}</td><td>${r.overdue_days}d</td><td>${r.predicted_delay_days}d</td><td><b>${r.priority_score}</b></td><td><button class="mini" onclick="draftReminder('${esc(r.invoice_id)}','${esc(r.customer)}',${r.gross_cents},${r.overdue_days})">Draft reminder</button></td></tr>`).join("")}</table>`:"<small>Nothing to collect.</small>";
   }catch(e){toast(e.message)}
 }
 function fcDrill(w){
@@ -137,6 +191,7 @@ async function loadTenants(){
 async function switchTenant(id){
   if(!id) return;
   localStorage.setItem("ac-tenant",id);
+  WS_GEN++;
   WS=null; /* the stale-read guard in refreshWorkspace must not carry the old tenant's state across */
   const sel=$("tenant-switch"); if(sel) sel.value=id;
   sessionStorage.removeItem("ac-empty");
@@ -189,3 +244,81 @@ function mdRender(md){
   return html;
 }
 
+
+/* ===== v23 tour: Step 4 SAP stage + Step 6 scorecard ===== */
+let SAP_DOCS=null, SAP_SEL=0;
+async function loadSap(){
+  const st=$("sap-state"); if(!st) return;
+  try{
+    const d=await api("/api/v1/erp/run-documents");
+    SAP_DOCS=d;
+    if(!d.run_id||!d.documents.length){
+      st.innerHTML=`<div class="emptycase"><b>No posting documents yet.</b><br>The latest run has no cleared payments. Load a case in Step 1, let it run, and every cleared payment's DZ document is generated here.</div>`;
+      $("sap-t-docs").textContent="0"; $("sap-t-total").textContent="$0.00";
+      $("sap-t-reserve").textContent="$0.00";
+      $("sap-chips").innerHTML=""; $("sap-table").innerHTML="<small>No documents.</small>";
+      $("sap-payload").textContent="No document selected yet."; $("sap-reserve").innerHTML="<small>No dispute claims in the latest run.</small>";
+      return;
+    }
+    st.innerHTML="";
+    $("sap-t-docs").textContent=d.totals.documents;
+    $("sap-t-total").textContent=money(d.totals.debit_cents);
+    $("sap-t-reserve").textContent=d.reserve?money(d.reserve.claimed_cents):"$0.00";
+    $("sap-chips").innerHTML=d.documents.map((x,i)=>`<button class="sapchip ${i===SAP_SEL?"on":""}" onclick="selectSapDoc(${i})">${esc(x.payment_id)}${x.document.document_number?` · ${esc(x.document.document_number)}`:""} - ${esc(x.payer||"")}</button>`).join("");
+    if(SAP_SEL>=d.documents.length) SAP_SEL=0;
+    renderSapDoc();
+    const rv=$("sap-reserve");
+    if(d.reserve){
+      rv.innerHTML=d.reserve.journals.map(j=>`<p><b>${esc(j.payment_id)}</b> - claim of ${money(j.claimed_cents)} reclassified under ASC 606 / IFRS 15:</p>`+erpGlTable(j.journal.journal)+`<small>${esc(j.journal.note||"")}</small>`).join("");
+    } else rv.innerHTML="<small>No dispute claims in the latest run.</small>";
+  }catch(e){ st.innerHTML=`<small>Could not load the posting documents: ${esc(e.message)}</small>` }
+}
+function erpGlTable(journal){
+  const byGl={};
+  (journal||[]).forEach(l=>{ const k=l.gl_account+"|"+l.account; byGl[k]=byGl[k]||{gl:l.gl_account,name:l.account,dr:0,cr:0}; byGl[k].dr+=l.debit_cents; byGl[k].cr+=l.credit_cents; });
+  const rows=Object.values(byGl);
+  const td=rows.reduce((a,r)=>a+r.dr,0), tc=rows.reduce((a,r)=>a+r.cr,0);
+  return `<table><tr><th>GL account</th><th>Account</th><th>Debit</th><th>Credit</th></tr>${rows.map(r=>`<tr><td>${esc(r.gl)}</td><td>${esc(r.name)}</td><td>${r.dr?money(r.dr):"-"}</td><td>${r.cr?money(r.cr):"-"}</td></tr>`).join("")}<tr><td colspan="2"><b>Total - ${td===tc?"balanced to the cent":"OUT OF BALANCE"}</b></td><td><b>${money(td)}</b></td><td><b>${money(tc)}</b></td></tr></table>`;
+}
+function renderSapDoc(){
+  if(!SAP_DOCS||!SAP_DOCS.documents.length) return;
+  const x=SAP_DOCS.documents[SAP_SEL], doc=x.document;
+  document.querySelectorAll(".sapchip").forEach((c,i)=>c.classList.toggle("on",i===SAP_SEL));
+  $("sap-table").innerHTML=`<p><b>${esc(x.payment_id)}</b> - ${esc(x.payer||"")} - status ${esc(x.status)} - document ${esc(doc.document_number||"preview (a number is issued when a match is approved)")} - ${doc.balanced?pill("Balanced","ok"):pill("Out of balance","bad")}</p>`+erpGlTable(doc.journal);
+  $("sap-payload").textContent=JSON.stringify(doc.bapi_payload,null,2);
+  $("sap-note").innerHTML=`<small>${esc(doc.note||"")}</small>`;
+}
+function selectSapDoc(i){ SAP_SEL=i; renderSapDoc(); }
+function copySapPayload(btn){
+  const t=$("sap-payload").textContent;
+  if(navigator.clipboard) navigator.clipboard.writeText(t).then(()=>toast("SAP payload copied"));
+  btn.textContent="Copied"; setTimeout(()=>btn.textContent="Copy payload",1500);
+}
+
+async function loadScore(){
+  const el=$("score-kpis"); if(!el) return;
+  const w=WS||await refreshWorkspace();
+  if(!w||!w.case){
+    el.innerHTML=`<div class="emptycase"><b>Empty workspace.</b><br>Step 6 reports only what the agent has actually done. Load a case in Step 1 and this scorecard fills from its stored runs - it never shows placeholder numbers.</div>`;
+    return;
+  }
+  try{
+    const runs=await api("/api/v1/runs");
+    if(!runs.length){ el.innerHTML=`<div class="emptycase"><b>No runs yet.</b><br>The case is loaded; run it from Step 2 and the scorecard computes from the stored run.</div>`; return }
+    const latest=runs[0];
+    const matches=await api(`/api/v1/runs/${latest.run_id}/matches`);
+    const decided=matches.length, staged=Math.max(w.staged_payments, decided);
+    const resolution=staged?Math.round(decided/staged*1000)/10:0;
+    const auto=matches.filter(m=>m.status==="AUTO_POSTED");
+    const cash=auto.reduce((a,m)=>a+((m.result||{}).lines||[]).reduce((x,l)=>x+l.net_cents,0),0);
+    let ev=0; try{ const hub=await api("/api/v1/mail/hub"); ev=(hub.disputes||[]).reduce((a,x)=>a+(x.expected_recovery_usd||0),0); }catch(e){}
+    const hours=(auto.length*12/60).toFixed(1);
+    el.innerHTML=`<div class="scoregrid">
+      <div class="card"><div class="k">Autonomous resolution rate</div><div class="v">${resolution}%</div><div class="n">${decided} of ${staged} wires received a stored decision in the latest run (posted, held or refused with a reason); the duplicate the guard blocked before matching is the remainder</div></div>
+      <div class="card"><div class="k">Touchless auto-post rate</div><div class="v">${(latest.touchless_rate*100).toFixed(1)}%</div><div class="n">Payments posted with no human touch, of all payments in the run</div></div>
+      <div class="card"><div class="k">Cash posted by the agent</div><div class="v">${money(cash)}</div><div class="n">Net applied on auto-posted matches in the latest run</div></div>
+      <div class="card"><div class="k">Recovery in flight (EV)</div><div class="v">$${ev.toLocaleString("en-US",{maximumFractionDigits:0})}</div><div class="n">Expected value of the dispute claims the Deduction Agent opened</div></div>
+      <div class="card"><div class="k">Analyst hours returned</div><div class="v">${hours} h</div><div class="n">${auto.length} auto-posted payments x 12 minutes manual benchmark (a labelled assumption)</div></div>
+    </div>`;
+  }catch(e){ el.innerHTML=`<small>Could not compute the scorecard: ${esc(e.message)}</small>` }
+}

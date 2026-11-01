@@ -13,6 +13,8 @@ ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     AUTOCASH_DATA_DIR=/app/data \
     AUTOCASH_KERNEL_BIN=/app/bin/autocash-kernel
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install -r backend/requirements.txt
 COPY backend/app ./backend/app

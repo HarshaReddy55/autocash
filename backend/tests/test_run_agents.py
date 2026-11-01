@@ -10,12 +10,9 @@ client = TestClient(api_mod.app)
 
 def _seed_run():
     client.post("/api/v1/workspace/reset")
-    client.post("/api/v1/cases/seed/load")
-    ws = client.get("/api/v1/workspace").json()
-    r = client.post("/api/v1/batches", json={
-        "idempotency_key": "agents-test-1", "payments": ws["pending_payments"]})
+    r = client.post("/api/v1/cases/seed/load")  # v21: loading runs the case
     assert r.status_code == 200, r.text
-    return r.json()
+    return r.json()["run"]
 
 
 def test_run_agents_pipeline_recorded():
