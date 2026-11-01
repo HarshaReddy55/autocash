@@ -38,7 +38,7 @@ class Policy:
     auto_dispute_min_recovery_usd: float = 100.0
     dispute_processing_cost_usd: float = 45.0
     tolerance_writeoff_cents: int = 2500 # variances <= $25 write off, do not dispute
-    maker_checker_threshold_cents: int = 1_000_000  # $10,000
+    maker_checker_threshold_cents: int = 10_000_000  # $100,000
 
 @dataclass
 class MatchLine:

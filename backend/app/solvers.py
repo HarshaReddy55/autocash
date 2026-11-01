@@ -37,14 +37,52 @@ def solve_milp(payment: Payment, candidates: list, policy: Policy) -> MatchResul
     A_ub = np.zeros((n, num_vars))
     for i in range(n):
         A_ub[i, i] = -1.0; A_ub[i, n + i] = 1.0
-    A_full = np.vstack([A_eq, A_ub])
-    lb_con = np.concatenate([[payment.amount_cents], np.full(n, -np.inf)])
-    ub_con = np.concatenate([[payment.amount_cents], np.zeros(n)])
     lb_vars = np.zeros(num_vars); ub_vars = np.ones(num_vars); ub_vars[-2:] = np.inf
-    res = milp(c=c, integrality=integrality, bounds=Bounds(lb_vars, ub_vars),
-               constraints=LinearConstraint(A_full, lb_con, ub_con))
+    # Integer verification loop: with seven-figure gross amounts in the
+    # equality row, HiGHS scaling tolerances can accept a set that is a few
+    # cents off as if it balanced. Every returned set is therefore re-checked
+    # in exact integer cents; a set whose true residual differs from the
+    # solver-reported one is cut from the problem and the solve repeats.
+    cut_rows, cut_bounds = [], []
+    sol = None
+    for _attempt in range(6):
+        A_full = np.vstack([A_eq, A_ub] + cut_rows) if cut_rows else np.vstack([A_eq, A_ub])
+        lb_con = np.concatenate([[payment.amount_cents], np.full(n, -np.inf),
+                                 np.full(len(cut_rows), -np.inf)])
+        ub_con = np.concatenate([[payment.amount_cents], np.zeros(n),
+                                 np.array(cut_bounds, dtype=float)]) if cut_rows else \
+            np.concatenate([[payment.amount_cents], np.zeros(n)])
+        res = milp(c=c, integrality=integrality, bounds=Bounds(lb_vars, ub_vars),
+                   constraints=LinearConstraint(A_full, lb_con, ub_con))
+        if res.x is None:
+            break
+        sol = res.x
+        _lines_idx = [i for i in range(n) if round(sol[i]) == 1]
+        _net = 0
+        for i in _lines_idx:
+            inv = candidates[i]
+            _dt = round(sol[n + i]) == 1
+            _net += inv.gross_cents - (round(inv.gross_cents * inv.discount_rate) if _dt else 0)
+        _ded = payment.claimed_deduction_cents if round(sol[2 * n]) == 1 else 0
+        _true_residual = payment.amount_cents - _net + _ded
+        _reported = int(round(sol[2 * n + 1] - sol[2 * n + 2]))
+        if _true_residual == _reported or not _lines_idx:
+            break
+        row = np.zeros((1, num_vars))
+        for i in _lines_idx:
+            row[0, i] = 1.0
+        cut_rows.append(row)
+        cut_bounds.append(float(len(_lines_idx) - 1))
+        sol = None
+    if sol is None:
+        # Every candidate set the solver offered failed integer verification.
+        latency = round((time.perf_counter() - t0) * 1000, 2)
+        return MatchResult(payment.payment_id, "NO_MATCH", "milp", latency, [], False,
+                           payment.amount_cents, 0.0, "none",
+                           {"residual_cents": payment.amount_cents, "invoices_considered": n,
+                            "objective_terms": [], "objective_total": 0.0,
+                            "verification_note": "solver sets failed integer verification and were cut"})
     latency = round((time.perf_counter() - t0) * 1000, 2)
-    sol = res.x
     lines, by_id = [], {inv.invoice_id: inv for inv in candidates}
     for i, inv in enumerate(candidates):
         if round(sol[i]) == 1:

@@ -138,9 +138,27 @@ def _rebuttal_template(f):
     return body.format(claimed=claimed)
 
 
+def _chase_template(f):
+    return (f"To: {f.get('payer', 'Payer')} - Accounts Payable\n"
+            f"Subject: Remittance advice needed - payment {f.get('payment_id', '')} of {_money(f.get('amount_cents', 0))}\n\n"
+            f"Dear Accounts Payable team,\n\n"
+            f"We received a payment of {_money(f.get('amount_cents', 0))} from {f.get('payer', 'your company')} "
+            f"(our reference {f.get('payment_id', '')}), but no remittance advice came with it, and the amount "
+            f"does not match any single open invoice or combination of open invoices on your account. So that "
+            f"we can apply this cash correctly and keep your account current, could you please send the "
+            f"remittance advice, or simply confirm which invoice or invoices this payment is meant to settle?\n\n"
+            f"If the payment covers a partial amount or takes a deduction, a one-line note of the split is "
+            f"enough. Until we hear back, the amount stays unapplied on your account - no fees or interest "
+            f"accrue from our side while we wait.\n\n"
+            f"Regards,\nAccounts Receivable - AutoCash exceptions desk\n"
+            f"(Draft composed from the exception record - review before sending.)")
+
+
 def draft_message(kind, tone, facts, client=None):
     if kind == "dispute_email":
         text, label = _dispute_template(tone or "strict", facts), "template"
+    elif kind == "chase_email":
+        text, label = _chase_template(facts), "template"
     else:
         text, label = _rebuttal_template(facts), "template"
     client = client or GeminiClient()
@@ -149,8 +167,9 @@ def draft_message(kind, tone, facts, client=None):
             out = client.generate_text(
                 "Rewrite this business email draft in a firm, professional tone. Keep EVERY number, "
                 f"reference and name exactly as written. Return only the rewritten text.\n\n{text}")
-            claimed = _money(facts.get("claimed_cents", 0))
-            if out and claimed in out and len(out) > 40:
+            anchor = _money(facts.get("claimed_cents", 0)) if kind != "chase_email" \
+                else _money(facts.get("amount_cents", 0))
+            if out and anchor in out and len(out) > 40:
                 return {"text": out.strip(), "source": "gemini"}
         except Exception:
             pass

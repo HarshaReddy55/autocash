@@ -32,19 +32,39 @@ CREATE TABLE IF NOT EXISTS column_mappings(
   source_fingerprint TEXT PRIMARY KEY, mapping_json TEXT);
 CREATE TABLE IF NOT EXISTS workspace_meta(
   key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS outbox(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, to_addr TEXT, subject TEXT, body TEXT,
+  kind TEXT, ref_id TEXT, status TEXT, detail TEXT, created_at TEXT);
 """
 
 class Repository:
     def __init__(self, path):
         self.path = path
         self._lock = threading.Lock()
-        self.conn = sqlite3.connect(path, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.executescript(SCHEMA)
-        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(payments)").fetchall()]
+        self._local = threading.local()
+        conn = self.conn  # the creating thread's connection; builds the schema
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript(SCHEMA)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(payments)").fetchall()]
         if "references_json" not in cols:
-            self.conn.execute("ALTER TABLE payments ADD COLUMN references_json TEXT DEFAULT '[]'")
-        self.conn.commit()
+            conn.execute("ALTER TABLE payments ADD COLUMN references_json TEXT DEFAULT '[]'")
+        conn.commit()
+
+    @property
+    def conn(self):
+        """One SQLite connection per thread. A single shared connection
+        corrupts under concurrent requests (sqlite3.InterfaceError: bad
+        parameter or other API misuse) because cursors interleave on it.
+        WAL mode plus a busy timeout makes per-thread connections to the
+        same file safe, and in-memory repositories stay inside the one
+        request thread that created them."""
+        c = getattr(self._local, "conn", None)
+        if c is None:
+            c = sqlite3.connect(self.path, check_same_thread=False)
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("PRAGMA busy_timeout=5000")
+            self._local.conn = c
+        return c
 
     def _x(self, sql, params=()):
         with self._lock:
@@ -116,6 +136,22 @@ class Repository:
             out.append(inv)
         return out
 
+    def all_invoices(self):
+        """Every invoice in the workspace, any status (open or settled)."""
+        rows = self.conn.execute(
+            "SELECT invoice_id, customer, subsidiary, gross_cents, currency, po_number,"
+            " discount_rate, age_days, due_in_days, predicted_delay_days, status FROM invoices").fetchall()
+        from domain import Invoice
+        return [Invoice(invoice_id=r[0], customer=r[1], subsidiary=r[2], gross_cents=r[3],
+                        currency=r[4], po_number=r[5], discount_rate=r[6], age_days=r[7],
+                        due_in_days=r[8], predicted_delay_days=r[9]) for r in rows]
+
+    def settle_invoices(self, invoice_ids):
+        """Mark invoices settled (posted against an approved match). They
+        leave the open ledger, the forecast and future candidate pools."""
+        for iid in invoice_ids:
+            self._x("UPDATE invoices SET status='SETTLED' WHERE invoice_id=?", (iid,))
+
     def create_run(self, run_id, idem_key, kind, policy_json, created_at):
         self._x("INSERT INTO runs VALUES (?,?,?,?,?,?,NULL)",
                 (run_id, idem_key, kind, 'RUNNING', policy_json, created_at))
@@ -124,6 +160,12 @@ class Repository:
     def find_run_by_idempotency(self, key):
         r = self.conn.execute("SELECT run_id, status FROM runs WHERE idempotency_key=?", (key,)).fetchone()
         return r
+    def steps_for_run(self, run_id):
+        rows = self.conn.execute(
+            "SELECT agent_name, status, latency_ms, evidence_json, confidence FROM run_steps "
+            "WHERE run_id=? ORDER BY id", (run_id,)).fetchall()
+        return [{"agent": r[0], "status": r[1], "latency_ms": r[2],
+                 "evidence": json.loads(r[3]) if r[3] else {}, "confidence": r[4]} for r in rows]
     def add_step(self, run_id, agent, status, latency_ms, evidence, confidence):
         self._x("INSERT INTO run_steps(run_id, agent_name, status, latency_ms, evidence_json, confidence) VALUES (?,?,?,?,?,?)",
                 (run_id, agent, status, latency_ms, json.dumps(evidence), confidence))
@@ -162,6 +204,14 @@ class Repository:
         return {"match_id": row[0], "run_id": row[1], "payment_id": row[2], "status": row[3],
                 "result": json.loads(row[4])}
 
+    def latest_match_for_payment(self, payment_id):
+        row = self.conn.execute(
+            "SELECT match_id, run_id, payment_id, status, result_json FROM matches "
+            "WHERE payment_id=? ORDER BY rowid DESC LIMIT 1", (payment_id,)).fetchone()
+        if not row: return None
+        return {"match_id": row[0], "run_id": row[1], "payment_id": row[2],
+                "status": row[3], "result": json.loads(row[4])}
+
     def update_match(self, match_id, status, result):
         self._x("UPDATE matches SET status=?, result_json=? WHERE match_id=?",
                 (status, json.dumps(result), match_id))
@@ -179,6 +229,17 @@ class Repository:
                         "invoices": [l.get("invoice_id") for l in res.get("lines", [])],
                         "decision_reason": res.get("decision_reason")})
         return out
+
+    def add_outbox(self, to_addr, subject, body, kind, ref_id, status, detail, ts):
+        cur = self._x("INSERT INTO outbox(to_addr, subject, body, kind, ref_id, status, detail, created_at) VALUES (?,?,?,?,?,?,?,?)",
+                      (to_addr, subject, body, kind, ref_id, status, detail, ts))
+        return cur.lastrowid
+    def list_outbox(self, limit=50):
+        rows = self.conn.execute(
+            "SELECT id, to_addr, subject, kind, ref_id, status, detail, created_at FROM outbox "
+            "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [{"id": r[0], "to": r[1], "subject": r[2], "kind": r[3], "ref_id": r[4],
+                 "status": r[5], "detail": r[6], "created_at": r[7]} for r in rows]
 
     def audit_list(self, limit=100):
         rows = self.conn.execute(

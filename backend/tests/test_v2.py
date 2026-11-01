@@ -7,7 +7,7 @@ from api import app
 c = TestClient(app)
 
 PAY_CSV = """Payment ID,Payer,Amount,Remittance
-X1,Apex Manufacturing,200.00,"INV-1001, INV-1002"
+X1,Apex Manufacturing,52000.00,"INV-1001, INV-1002"
 X2,BluePeak Electronics,930.00,BluePeak Electronics wire less discount and deduction
 """
 

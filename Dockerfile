@@ -1,5 +1,8 @@
-# AutoCash - multi-stage build: Rust kernel + Python service
-FROM rust:1-slim AS kernel
+# AutoCash - multi-stage build: the Rust kernel is compiled in stage 1
+# and the binary is copied into the Python runtime in stage 2, so the
+# deployed service runs the real Rust kernel (AUTOCASH_KERNEL_BIN),
+# not the Python fallback. rust_bridge.py calls it over stdio.
+FROM rust:1.82-slim AS rust-builder
 WORKDIR /build
 COPY rust-kernel/Cargo.toml rust-kernel/Cargo.lock* ./
 COPY rust-kernel/src ./src
@@ -13,8 +16,10 @@ WORKDIR /app
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install -r backend/requirements.txt
 COPY backend/app ./backend/app
+COPY backend/tests ./backend/tests
 COPY frontend ./frontend
-COPY --from=kernel /build/target/release/autocash-kernel /app/bin/autocash-kernel
+COPY docs ./docs
+COPY --from=rust-builder /build/target/release/autocash-kernel /app/bin/autocash-kernel
 RUN mkdir -p /app/data && useradd -m autocash && chown -R autocash /app
 USER autocash
 EXPOSE 8080

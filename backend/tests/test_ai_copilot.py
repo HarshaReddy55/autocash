@@ -41,3 +41,20 @@ def test_copilot_grounded_and_refuses():
     assert "does not contain" in a2["answer"]
     a3 = answer(repo, "What is the touchless automation rate?")
     assert "Touchless rate" in a3["answer"]
+
+def test_gemini_key_normalised_and_error_recorded():
+    import ai as ai_mod
+    c = GeminiClient(api_key="  test-key-123\n")
+    assert c.api_key == "test-key-123"
+    def boom(payload):
+        raise RuntimeError("connection refused by upstream")
+    bad = GeminiClient(api_key="k", transport=boom)
+    try:
+        bad.generate_text("hello")
+        raise AssertionError("expected failure")
+    except RuntimeError:
+        pass
+    assert ai_mod.LAST_GEMINI_ERROR["error"] and "RuntimeError" in ai_mod.LAST_GEMINI_ERROR["error"]
+    # and the deterministic fallback still answers when Gemini fails
+    out = parse_remittance(TEXT, client=bad)
+    assert out["source"] == "deterministic_fallback" and out["degraded"] is True

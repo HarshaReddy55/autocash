@@ -10,11 +10,14 @@ pack exists to prove. The pack states the hero's correct outcome up front in
 Dashboard, Ledger, Run, Approvals, Forecast, Collections and Copilot all work
 on the same case, and the run is graded against the stated expectations.
 
-Surrounding traffic is deliberately boring: exact single-invoice payments
-with explicit references, for customers OTHER than the hero payer, so it can
-never contaminate the hero payment's candidate pool. It exists so the case
-behaves like a real portfolio when loaded - a believable touchless rate, a
-forecast with substance, a collections queue with real priorities.
+Surrounding traffic is ordinary morning traffic for customers OTHER than
+the hero payer, so it can never contaminate the hero payment's candidate
+pool: mostly exact single-invoice payments with explicit references, plus
+its own small mess - a partial payment, a rounding deduction inside the
+write-off tolerance, and one wrong invoice reference the payer-plus-amount
+rung has to rescue. It exists so the case behaves like a real portfolio
+when loaded - a believable touchless rate, a forecast with substance, a
+collections queue with real priorities.
 """
 from domain import Invoice, Payment
 
@@ -70,6 +73,21 @@ def _traffic(sid, *templates):
                 pays.append(_pay(sid, pn, cust, amt, references=[inv.invoice_id], remittance_text=remit))
                 pn += 1
             n += 1
+    # Real mornings are not clean, so the traffic carries ordinary mess of
+    # its own (all on traffic customers, never the hero payer): one payer
+    # pays only 60% of an invoice, one takes a small rounding deduction
+    # inside the write-off tolerance, and one quotes the wrong invoice
+    # reference - the first traffic invoice, which its own payment settles
+    # earlier in the batch, so the reference is already gone when this wire
+    # is processed and the payer-plus-amount rung has to rescue it.
+    if len(pays) > 2:
+        pays[2].amount_cents = round(pays[2].amount_cents * 0.6)
+    if len(pays) > 5:
+        pays[5].claimed_deduction_cents = 1200
+        pays[5].amount_cents -= 1200
+        pays[5].deduction_reason_raw = "rounding"
+    if len(pays) > 8 and invs:
+        pays[8].references = [invs[0].invoice_id]
     return invs, pays
 
 def _case(hero_invs, hero_pays, *templates):
@@ -80,8 +98,8 @@ SCENARIOS = [
     {
         "id": "split-exact",
         "title": "Split payment across two invoices",
-        "story": "Apex Manufacturing sends one $20,000 wire covering two open invoices ($12,000 + $8,000), while a single $20,000 invoice from Apex sits open as a decoy. A greedy or amount-only matcher grabs the decoy; the MILP optimiser must prefer the pair because policy ages work oldest first. The wire arrives inside a normal morning batch: a full ledger of 18 open invoices across seven customers, and eleven other payments that should simply post.",
-        "shows": "Subset-sum matching under a cash conservation equation, with an age-weighted objective - proven inside a realistic portfolio, not on three toy rows.",
+        "story": "Apex Manufacturing sends one $20,000 wire that covers two open invoices ($12,000 + $8,000). A single $20,000 invoice from Apex is also open, as a decoy. A simple matcher that looks at amounts alone grabs the decoy. The optimiser must choose the pair instead, because policy settles the oldest work first. The wire arrives inside a normal morning batch: 18 open invoices across seven customers, and eleven other payments that should simply post.",
+        "shows": "How the engine picks the right set of invoices for one payment, under a strict rule that every cent must be accounted for - shown inside a realistic batch, not on three toy rows.",
         "build": lambda: _case(
             [_inv("S1", 1, "Apex Manufacturing", 1200000, po_number="PO-11", age_days=40, due_in_days=-40),
              _inv("S1", 2, "Apex Manufacturing", 800000, po_number="PO-12", age_days=5, due_in_days=-5),
@@ -93,8 +111,8 @@ SCENARIOS = [
     {
         "id": "po-wins",
         "title": "Wrong invoice reference, right purchase order",
-        "story": "A $20,000 Apex wire names the wrong invoice in its remittance, but carries purchase order PO-13. Reference matching alone would post against the wrong document; the engine resolves candidates by PO and posts to the invoice the PO actually belongs to. Around it, the batch carries a full working ledger - 16 open invoices, seven customers - and the usual flow of clean wires that must not be disturbed by the rescue.",
-        "shows": "Candidate resolution order: references, then PO, then payer and amount - and why the order matters, at working scale.",
+        "story": "A $20,000 Apex wire names the wrong invoice in its remittance, but it carries purchase order PO-13. Matching on the reference alone would post the money against the wrong invoice. The engine checks the PO instead and posts to the invoice that PO belongs to. Around it sits a full working ledger - 16 open invoices, seven customers - and the usual clean wires, which the rescue must not disturb.",
+        "shows": "The order the engine tries evidence in: first the reference, then the PO, then payer and amount - and why that order matters, at working scale.",
         "build": lambda: _case(
             [_inv("S2", 1, "Apex Manufacturing", 2000000, po_number="PO-13", age_days=30, due_in_days=-30),
              _inv("S2", 2, "Apex Manufacturing", 2000000, po_number="PO-14", age_days=10, due_in_days=-10)],
@@ -105,8 +123,8 @@ SCENARIOS = [
     {
         "id": "discount-deduction-dispute",
         "title": "Early-pay discount plus a shortage deduction",
-        "story": "BluePeak Electronics pays a $48,500 invoice (2 percent early-pay terms) at $43,330: the $970 discount taken, plus a $4,200 shortage deduction claimed. Proof of delivery is clean. The engine must reconcile to zero residual AND judge the deduction: win probability 0.94 on clean POD, expected recovery $3,903 after the $45 processing cost, above the $100 auto-dispute threshold - so a dispute claim is raised automatically. The rest of the batch is an ordinary day: 16 invoices on the ledger, twelve wires, one dispute-worthy claim among them.",
-        "shows": "Deduction intelligence: reason classification, win-probability evidence rules, and expected-value dispute decisions.",
+        "story": "BluePeak Electronics owes $48,500 on an invoice with 2 percent early-pay terms. It pays $43,330: the $970 discount taken, plus a $4,200 deduction claimed for a shortage. Proof of delivery is clean. The engine must account for every cent AND judge the deduction. On clean proof of delivery the win probability is 0.94, so the expected recovery is $3,903 after the $45 cost of fighting - above the $100 threshold, so the dispute claim is raised on its own. The rest of the batch is an ordinary day: 16 invoices on the ledger, twelve wires, one claim worth fighting among them.",
+        "shows": "How deductions are judged: the reason is classified, the evidence sets the win probability, and a simple value test decides whether to dispute.",
         "build": lambda: _case(
             [_inv("S3", 1, "BluePeak Electronics", 4850000, po_number="PO-21", discount_rate=0.02, age_days=25, due_in_days=-25)],
             [_pay("S3", 1, "BluePeak Electronics", 4333000, claimed_deduction_cents=420000,
@@ -118,8 +136,8 @@ SCENARIOS = [
     {
         "id": "duplicate-guard",
         "title": "The same wire arrives twice",
-        "story": "Bank feeds and lockbox files do resend payments. In this batch, Cascade Chemicals' $36,750 wire appears twice. The first posts cleanly against its invoice; the second must be stopped as a duplicate and routed to a human, never double-posted against other invoices - while the eleven ordinary wires around it, on a ledger of 16 open invoices, post untouched.",
-        "shows": "Payment fingerprinting and duplicate defence inside the batch, before any matching happens.",
+        "story": "Bank feeds and lockbox files do resend payments. In this batch, Cascade Chemicals' $36,750 wire appears twice. The first copy posts cleanly against its invoice. The second must be stopped as a duplicate and sent to a human - never posted a second time against other invoices. The eleven ordinary wires around it, on a ledger of 16 open invoices, post untouched.",
+        "shows": "How each payment is fingerprinted and checked for duplicates inside the batch, before any matching happens.",
         "build": lambda: _case(
             [_inv("S4", 1, "Cascade Chemicals", 3675000, po_number="PO-31", age_days=18, due_in_days=-18)],
             [_pay("S4", 1, "Cascade Chemicals", 3675000, references=["S4-INV-1"]),
@@ -131,8 +149,8 @@ SCENARIOS = [
     {
         "id": "partial-residual",
         "title": "Partial payment with an unexplained residual",
-        "story": "BluePeak Electronics pays $11,000 against an $18,500 invoice and explains nothing. The engine posts the partial match, quantifies the $7,500 residual, and raises a review exception with counterfactuals - what else could this cash have been? - instead of silently writing it off or forcing a wrong match. Everything else in the batch is routine: a 16-invoice ledger and ten clean wires that post while one payment waits for a human.",
-        "shows": "Partial matching, residual accounting, and the exception workflow with why-not counterfactuals.",
+        "story": "BluePeak Electronics pays $11,000 against an $18,500 invoice and explains nothing. The engine posts the part it can prove, states the $7,500 still unexplained, and raises a review exception that shows what else this cash could have been - instead of quietly writing it off or forcing a wrong match. Everything else in the batch is routine: a 16-invoice ledger and ten clean wires that post while one payment waits for a human.",
+        "shows": "Part payments: how the engine posts what it can prove, accounts for the rest, and explains its thinking instead of guessing.",
         "build": lambda: _case(
             [_inv("S5", 1, "BluePeak Electronics", 1850000, po_number="PO-22", age_days=12, due_in_days=-12),
              _inv("S5", 2, "BluePeak Electronics", 625000, po_number="PO-23", age_days=3, due_in_days=3)],
@@ -144,8 +162,8 @@ SCENARIOS = [
     {
         "id": "silent-exact",
         "title": "No remittance at all, exact amount",
-        "story": "A $22,400 Summit Logistics wire lands with no remittance text and no references - only a payer name and an amount that exactly equals one open Summit invoice. The engine falls back to payer plus amount resolution and still posts touchlessly, with the matched-by path recorded for audit. The rest of the ledger is a normal book: 17 open invoices across seven customers, eleven ordinary wires in the same batch.",
-        "shows": "Graceful degradation of the matching cascade when remittance data is missing entirely.",
+        "story": "A $22,400 Summit Logistics wire lands with no remittance text and no references - only a payer name and an amount that exactly equals one open Summit invoice. The engine falls back to payer plus amount and still posts it without a human touching it, recording how it matched for the audit trail. The rest of the ledger is a normal book: 17 open invoices across seven customers, eleven ordinary wires in the same batch.",
+        "shows": "What happens when the remittance is missing entirely: the engine works down its list of evidence and still posts, with the path recorded.",
         "build": lambda: _case(
             [_inv("S6", 1, "Summit Logistics", 2240000, po_number="PO-41", age_days=8, due_in_days=6),
              _inv("S6", 2, "Summit Logistics", 960000, po_number="PO-42", age_days=2, due_in_days=12)],
@@ -156,12 +174,16 @@ SCENARIOS = [
     {
         "id": "blind-lockbox-wire",
         "title": "Blind lockbox wire - $1,145,820.00, zero remittance",
-        "story": "A seven-figure wire lands from a lockbox file with no remittance text, no references, nothing but the payer name and the amount. Three invoices are open for Continental Foodservice; only one equals the wire to the cent and no combination of the others can sum to it. The engine must fall back to payer plus exact-amount resolution and still post a million-dollar wire touchlessly - with the matched-by path recorded for audit. Loaded, the case is a $2.21 million open book: 17 invoices, seven customers, an eleven-payment batch.",
-        "shows": "The bottom rung of the matching cascade at enterprise scale: payer plus amount, with subset-sum proof that no other combination explains the cash.",
+        "story": "A seven-figure wire lands from a lockbox file with no remittance text and no references - only the payer name and the amount. The book is full of traps. Six invoices are open for Continental Foodservice. One is $1,145,819.63 - 37 cents short of the wire. One pair misses by 37 cents. One pair overshoots by 55 cents. Only one set equals the wire to the cent. A seventh invoice, for the exact wire amount, belongs to a different customer with a nearly identical name, Continental Foods Inc, and must never be touched. The engine falls back to payer plus exact amount, checks every combination, rejects each trap for a stated reason, and still posts the wire without human help. The case is a $5.65 million open book: 21 invoices, eight customers, eleven payments.",
+        "shows": "The last resort of matching, at full scale: payer plus exact amount, every combination checked, exactly one exact set - and the full reasoning shown on the match, with a clear reason for every invoice that was rejected.",
         "build": lambda: _case(
             [_inv("S7", 1, "Continental Foodservice", 25000000, po_number="PO-771", age_days=22, due_in_days=-22),
              _inv("S7", 2, "Continental Foodservice", 114582000, po_number="PO-772", age_days=35, due_in_days=-35),
-             _inv("S7", 3, "Continental Foodservice", 48000055, po_number="PO-773", age_days=9, due_in_days=9)],
+             _inv("S7", 3, "Continental Foodservice", 48000055, po_number="PO-773", age_days=9, due_in_days=9),
+             _inv("S7", 4, "Continental Foodservice", 114581963, po_number="PO-774", age_days=35, due_in_days=-35),
+             _inv("S7", 5, "Continental Foodservice", 66582000, po_number="PO-775", age_days=18, due_in_days=9),
+             _inv("S7", 6, "Continental Foodservice", 47999963, po_number="PO-776", age_days=27, due_in_days=-12),
+             _inv("S7", 7, "Continental Foods Inc", 114582000, po_number="PO-881", age_days=35, due_in_days=-35)],
             [_pay("S7", 1, "Continental Foodservice", 114582000)],
             _TRAFFIC_B, _TRAFFIC_C),
         "expect": {"S7-P1": {"status": "OPTIMAL_EXACT_MATCH", "auto_posted": True, "invoices": {"S7-INV-2"}}},
@@ -169,8 +191,8 @@ SCENARIOS = [
     {
         "id": "corrupted-ocr-remittance",
         "title": "Corrupted OCR remittance - the PO survives",
-        "story": "A $482,190.50 MegaMart Retail wire arrives with a remittance advice mangled by OCR: the invoice references are unreadable garbage. Two open MegaMart invoices carry the exact same amount; the older one is the tempting wrong answer an amount-or-age matcher would post. One field survived the scan intact - purchase order PO-8841 - and it belongs to the younger invoice. The engine must let the surviving evidence outrank age and amount, inside a full 17-invoice ledger and a twelve-payment batch.",
-        "shows": "Evidence hierarchy under data corruption: PO resolution beats the age-weighted objective when references are destroyed.",
+        "story": "A $482,190.50 MegaMart Retail wire arrives with a remittance advice damaged by scanning: the invoice references are unreadable garbage. Two open MegaMart invoices carry the exact same amount. The older one is the tempting wrong answer - a matcher that goes by amount or age would post it. One field survived the scan intact: purchase order PO-8841, and it belongs to the younger invoice. The engine must let the surviving evidence outrank age and amount, inside a full 17-invoice ledger and a twelve-payment batch.",
+        "shows": "When the paperwork is damaged, the evidence that survived decides: the PO outranks the age and amount rules.",
         "build": lambda: _case(
             [_inv("S8", 1, "MegaMart Retail", 48219050, po_number="PO-8850", age_days=60, due_in_days=-60),
              _inv("S8", 2, "MegaMart Retail", 48219050, po_number="PO-8841", age_days=15, due_in_days=-15)],
@@ -182,8 +204,8 @@ SCENARIOS = [
     {
         "id": "promo-deduction-spike",
         "title": "Promotional deduction spike - $9,000 claimed on a $312,400 invoice",
-        "story": "ShopLine Retail pays $303,400.00 against a $312,400.00 invoice and claims a $9,000 promotional allowance deduction - twenty standard deviations above this payer's deduction history in the demo profile (z = 20.0). Proof of delivery is clean. The engine reconciles the match exactly, flags the claim as an anomalous spike, classifies it RC-07 Promotional Allowance, and runs the dispute arithmetic: 0.94 x $9,000 - $45 = $8,415 expected recovery, far above the $100 threshold, so the dispute claim generates itself. The claim hides in a normal batch: 16 invoices on the ledger, eleven routine wires around it.",
-        "shows": "Anomaly detection (z-score) and expected-value dispute automation on a claim large enough to matter.",
+        "story": "ShopLine Retail pays $303,400.00 against a $312,400.00 invoice and claims a $9,000 promotional allowance deduction - twenty standard deviations above this payer's usual deductions in the demo profile (z = 20.0). Proof of delivery is clean. The engine matches the payment exactly, flags the claim as an unusual spike, classifies it RC-07 Promotional Allowance, and runs the dispute sums: 0.94 x $9,000 - $45 = $8,415 expected back, far above the $100 threshold, so the dispute claim creates itself. The claim hides in a normal batch: 16 invoices on the ledger, eleven routine wires around it.",
+        "shows": "Spotting a claim that is far outside a payer's normal pattern (z-score), and the value test that turns it into a dispute on its own.",
         "build": lambda: _case(
             [_inv("S9", 1, "ShopLine Retail", 31240000, po_number="PO-991", age_days=28, due_in_days=-28)],
             [_pay("S9", 1, "ShopLine Retail", 30340000, claimed_deduction_cents=900000,
@@ -196,8 +218,8 @@ SCENARIOS = [
     {
         "id": "fuzzy-ocr-evidence",
         "title": "Mangled evidence - OCR reference and a fuzzy payer name",
-        "story": "A $75,000 wire's remittance was scanned and the purchase order came out as P0-51 (a zero where the letter O belongs) instead of PO-51; the payer name on the wire reads 'APEX MANUFACTURING INC.' while the ledger customer is 'Apex Manufacturing'. Exact matching fails twice over. The engine retries references under OCR confusion normalisation (0 read as O), recovers PO-51 and posts to its invoice - and had the reference been destroyed entirely, a Jaro-Winkler fuzzy payer match (threshold 0.88) is the labelled fallback. The case loads a full book around the rescue: 16 invoices, seven customers, eleven payments.",
-        "shows": "Evidence recovery: OCR-normalised references and fuzzy entity resolution as labelled, auditable fallback rungs - never silent guesses.",
+        "story": "A $75,000 wire was scanned, and the purchase order came out as P0-51 - a zero where the letter O belongs - instead of PO-51. The payer name on the wire reads 'APEX MANUFACTURING INC.' while the ledger customer is 'Apex Manufacturing'. Exact matching fails twice over. The engine retries the reference, reading the zero as the letter O, recovers PO-51, and posts to its invoice. If the reference had been destroyed entirely, the fallback is a fuzzy payer-name match (Jaro-Winkler, threshold 0.88), labelled as a fallback. The case loads a full book around the rescue: 16 invoices, seven customers, eleven payments.",
+        "shows": "Recovering damaged evidence: references repaired after scanning errors, and fuzzy name matching as a labelled fallback - never a silent guess.",
         "build": lambda: _case(
             [_inv("S10", 1, "Apex Manufacturing", 7500000, po_number="PO-51", age_days=20, due_in_days=-20),
              _inv("S10", 2, "Apex Manufacturing", 4150000, po_number="PO-52", age_days=44, due_in_days=-44)],

@@ -1,0 +1,180 @@
+/* state.js - shared helpers, the API client, navigation, and the one
+   shared workspace (case bar, case brief) every view reads from.
+   Loaded first; the other modules build on these globals. */
+const $=id=>document.getElementById(id);
+const money=c=>"$"+(c/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function sessionId(){let s=sessionStorage.getItem("autocash_session_id");if(!s){s=(crypto.randomUUID?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16)}));sessionStorage.setItem("autocash_session_id",s);}return s}
+async function api(path,opts={}){const tn=localStorage.getItem("ac-tenant")||"";const r=await fetch(path,{headers:{"Content-Type":"application/json","X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})},...opts});if(!r.ok){throw new Error((await r.text()).slice(0,300))}return r.json()}
+async function downloadExport(path,fname){
+  try{ const tn=localStorage.getItem("ac-tenant")||"";
+    const r=await fetch(path,{headers:{"X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})}});
+    if(!r.ok) throw new Error("Export failed ("+r.status+") - run a case first, then export");
+    const b=await r.blob(); const u=URL.createObjectURL(b); const a=document.createElement("a");
+    a.href=u; a.download=fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u),4000);
+    toast("Downloaded "+fname);
+  }catch(e){ toast(e.message) }
+}
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),3400)}
+function go(s){document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.s===s));document.querySelectorAll("main section").forEach(x=>x.classList.toggle("active",x.id===s));const ab=document.querySelector(".navrow button.active");if(ab)ab.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"});refreshWorkspace();if(LOADERS[s]){const p=LOADERS[s]();if(p&&p.then)p.then(()=>{fillInfo();initReveal()});else{fillInfo();initReveal()}}}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>go(b.dataset.s));
+document.addEventListener("click",()=>setTimeout(()=>{fillInfo();initReveal()},60));
+function toggleHow(s){$("how-"+s).classList.toggle("open")}
+function pill(txt,kind){return `<span class="pill ${kind}">${esc(txt)}</span>`}
+function statusPill(st){return st==="OPTIMAL_EXACT_MATCH"?pill(st,"ok"):st==="PARTIAL_MATCH"?pill(st,"warn"):pill(st,"bad")}
+let lastRun=null,seedPayments=null,lastMatches=null;
+
+/* ---------- One shared workspace: the case bar and everything that reads it ---------- */
+let WS=null, casePayments=[];
+async function refreshWorkspace(){ try{ const d=await api("/api/v1/workspace");
+  // A workspace response generated before the latest run existed (its
+  // request was in flight while a batch completed) must not regress the
+  // shared state - it would blank the case bar, the brief and the KPIs
+  // until the next refresh. Only same-case or pre-case snapshots are
+  // guarded; explicit loads and resets assign WS directly, not via here.
+  if(WS&&WS.latest_run&&!d.latest_run&&(!d.case||(WS.case&&d.case.id===WS.case.id))) return WS;
+  WS=d; renderCasebar(); return WS }catch(e){ return null } }
+function renderCasebar(){
+  if(!WS) return; const c=WS.case;
+  $("cb-case").innerHTML=c?`${esc(c.name)} <small>- ${esc(c.source||"")} - loaded ${esc((c.loaded_at||"").slice(0,16).replace("T"," "))} UTC</small>`:"No case loaded <small>- load the demo, a use case, the builder, or your own files</small>";
+  $("cb-inv").textContent=WS.open_invoices;
+  $("cb-pay").innerHTML=`${WS.staged_payments} <small>(${WS.pending_payments.length} pending)</small>`;
+  $("cb-run").innerHTML=WS.latest_run?`${esc(String(WS.latest_run.run_id).slice(0,13))}... <small>${esc(WS.latest_run.status)}</small>`:"-";
+  $("cb-appr").textContent=WS.approvals_pending;
+  const sb=$("sb-case"); if(sb) sb.textContent="CASE "+(c?String(c.name).toUpperCase():"NONE");
+  const sw=$("cb-switch"); if(sw&&c&&[...sw.options].some(o=>o.value===c.id)) sw.value=c.id;
+  renderStaged(); renderUpStaged(); renderCaseBrief(); showHandoff();
+}
+let CASELIST=null;
+async function ensureCaseList(){
+  if(CASELIST) return CASELIST;
+  try{ const sc=await api("/api/v1/scenarios");
+    CASELIST=[{id:"seed",title:"Demo case - one realistic day of receipts"},...sc.map(x=>({id:x.id,title:x.title,story:x.story,shows:x.shows}))];
+    const sw=$("cb-switch");
+    if(sw){ sw.innerHTML=`<option value="">Switch case...</option>`+CASELIST.map(x=>`<option value="${esc(x.id)}">${esc(x.title)}</option>`).join("")+`<option value="__builder">Custom Case Builder (Use Cases page)</option><option value="__upload">Upload my own files</option>`;
+      if(WS&&WS.case&&[...sw.options].some(o=>o.value===WS.case.id)) sw.value=WS.case.id; }
+  }catch(e){ CASELIST=[] }
+  return CASELIST;
+}
+function switchCase(sel){
+  const v=sel.value; if(!v) return;
+  if(v==="__builder"){ go("cases"); setTimeout(()=>{const p=[...document.querySelectorAll("#cases .panel")].find(x=>x.innerText.includes("Custom Case Builder")); if(p)p.scrollIntoView({behavior:"smooth"})},450); }
+  else if(v==="__upload"){ go("upload"); }
+  else loadCase(v);
+}
+function openApprovals(){
+  go("run");
+  setTimeout(()=>{ const p=$("approvals-panel"); if(p){ p.scrollIntoView({behavior:"smooth",block:"start"}); p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash"); } },500);
+}
+let BRIEF_RUN=null, BRIEF_SEQ=0, BRIEF_PROMISE=null;
+async function briefOutcome(runId){
+  if(BRIEF_RUN&&BRIEF_RUN.run_id===runId) return BRIEF_RUN.html;
+  if(!BRIEF_PROMISE||BRIEF_PROMISE.run_id!==runId){
+    BRIEF_PROMISE={run_id:runId, promise:(async()=>{
+      // Case-wide outcome: merge the matches of EVERY run in this
+      // workspace, one entry per payment, most recent decision wins -
+      // so a small extra run (one staged wire) adds to the case totals
+      // instead of replacing them.
+      const runs=await api("/api/v1/runs");
+      const byPay=new Map(), excByPay=new Map();
+      for(const run of [...runs].reverse().slice(-10)){
+        const ms=await api(`/api/v1/runs/${run.run_id}/matches`);
+        for(const m of ms) byPay.set(m.payment_id, m);
+        const xs=await api(`/api/v1/runs/${run.run_id}/exceptions`);
+        for(const x of xs) excByPay.set(x.payment_id, x);
+      }
+      let cash=0, held=0, heldAmt=0, rec=0, auto=0;
+      for(const m of byPay.values()){ const r=m.result||{}; const eq=(r.derivation||{}).equation||{};
+        if(m.status==="AUTO_POSTED"||m.status==="APPROVED_POSTED"){ auto++; cash+=(r.lines||[]).reduce((a,l)=>a+l.net_cents,0); }
+        if(m.status==="PROPOSED"){ held++; heldAmt+=eq.payment_cents||0; }
+        const d=r.deduction||{}; if(d.autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM") rec+=Number(d.expected_recovery_value_usd||0); }
+      const stopped=[...excByPay.entries()].filter(([pid])=>!byPay.has(pid));
+      const KINDLBL={DUPLICATE_PAYMENT:"a duplicate wire",NO_MATCH:"no matching invoices",UNRESOLVED_RESIDUAL:"an unexplained remainder"};
+      const stoppedTxt=stopped.length?` ${stopped.length} ${stopped.length===1?"was":"were"} stopped before matching (${stopped.map(([,x])=>KINDLBL[x.kind]||"an exception").join(", ")}).`:"";
+      const total=new Set([...byPay.keys(),...excByPay.keys()]).size;
+      const verdict=`<p style="margin:0 0 10px;font-size:14.5px;line-height:1.55"><b>${total} payments came in: ${auto} posted themselves, ${held} ${held===1?"is":"are"} waiting for a person's decision.${stoppedTxt}</b></p>`;
+      const html=verdict+`<div class="cards" style="grid-template-columns:repeat(3,minmax(0,1fr));margin:0">
+        <div class="card"><div class="k">Auto-posted cash</div><div class="v">${money(cash)}</div><div class="n">${auto} payments posted with no human touch</div></div>
+        <div class="card"><div class="k">Expected back from disputes</div><div class="v">$${rec.toLocaleString("en-US",{maximumFractionDigits:0})}</div><div class="n">What the agent expects to win back from the claims it has opened</div></div>
+        <div class="card"><div class="k">Held for a person</div><div class="v">${held}</div><div class="n">${money(heldAmt)} waiting - decide them from Approvals waiting in the top bar</div></div></div>
+        <small>Totals for the whole case, across all of its runs - each payment counted once, by its latest decision. Time saved for the analyst: <b>${(auto*12/60).toFixed(1)} hours</b> (${auto} auto-posted payments x 12 minutes each, the stated manual benchmark).</small>`;
+      BRIEF_RUN={run_id:runId, html};
+      return html;
+    })()};
+  }
+  return BRIEF_PROMISE.promise;
+}
+const SEED_STORY="A normal day at a mid-size supplier. 16 payments arrive against 19 open invoices from 9 customers. Most are routine. Hidden among them: one payment split across two invoices, one that gives only a PO number, one with a wrong character in the invoice reference, one that takes an early-payment discount and deducts extra for a claimed shortage, one duplicate of an earlier wire, and one from a payer nobody recognises.";
+function renderCaseBrief(){
+  const el=$("case-brief"); if(!el||!WS) return;
+  const c=WS.case;
+  if(!c){ el.innerHTML=""; return }
+  if(!CASELIST){ ensureCaseList().then(()=>renderCaseBrief()); }
+  const meta=(CASELIST||[]).find(x=>x.id===c.id)||{};
+  const story=c.id==="seed"?SEED_STORY:(meta.story||"");
+  const shows=meta.shows||"";
+  const lr=WS.latest_run;
+  const cached=(lr&&BRIEF_RUN&&BRIEF_RUN.run_id===lr.run_id)?BRIEF_RUN.html:null;
+  const outcomeHtml=lr?(cached||`<div class="d">Counting this run's outcomes...</div>`):`<div class="d">Not run yet. Run this case from Run Reconciliation and this fills in: what the agent posted on its own, what it is recovering through disputes, and what is waiting for your decision.</div>`;
+  // The shell writes synchronously from the current workspace snapshot -
+  // no await stands between reading WS and writing, so no stale async
+  // invocation can ever land last. The outcome fills its own container
+  // when its fetch resolves, and only if that run is still the latest.
+  el.innerHTML=`<div class="panel" style="margin-bottom:18px"><h3>Case brief - ${esc(c.name)} <span data-info="impact"></span></h3><div class="grid2">
+    <div><div class="k" style="font-family:var(--mono);font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em">The situation - what came in</div>
+    <p style="margin:8px 0">${esc(story||"A working dataset loaded into the shared workspace.")}</p>
+    ${shows?`<small><b>What this case tests:</b> ${esc(shows)}</small><br>`:""}
+    <small>Open invoices in the ledger: <b>${WS.open_invoices}</b><br>Payments in this case: <b>${WS.staged_payments}</b>${WS.pending_payments.length===0?" - all of them have been run":WS.pending_payments.length===WS.staged_payments?" - all still waiting to run":` - <b>${WS.pending_payments.length}</b> of them still waiting to run`}${lr?`<br>The latest run processed <b>${lr.payments}</b> payments`:""}</small></div>
+    <div><div class="k" style="font-family:var(--mono);font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em">The outcome - what the agent did</div><div id="cb-outcome" style="margin-top:8px">${outcomeHtml}</div></div>
+    </div></div>`;
+  if(lr&&!cached){
+    briefOutcome(lr.run_id).then(html=>{ const t=$("cb-outcome"); if(t&&WS&&WS.latest_run&&WS.latest_run.run_id===lr.run_id) t.innerHTML=html; }).catch(()=>{});
+  }
+}
+function stagedTable(pays){
+  if(!pays.length) return "";
+  return `<table class="staged-t"><tr><th>Payment <span data-info="payid"></span></th><th>Payer <span data-info="cust"></span></th><th>Amount <span data-info="amt"></span></th><th>References <span data-info="lines"></span></th><th>Claimed deduction <span data-info="disc"></span></th><th>Deduction reason <span data-info="held"></span></th><th>POD <span data-info="state"></span></th><th>Remittance <span data-info="detail"></span></th></tr>${pays.map(p=>`<tr><td>${esc(p.payment_id)}</td><td>${esc(p.payer_raw)}</td><td>${money(p.amount_cents)}</td><td>${(p.references||[]).map(esc).join(", ")||"<small>none</small>"}</td><td>${p.claimed_deduction_cents?money(p.claimed_deduction_cents):"-"}</td><td>${esc(p.deduction_reason_raw||"-")}</td><td>${p.pod_verified_clean?pill("clean","ok"):pill("not verified","grey")}</td><td><small>${esc(p.remittance_text||"-")}</small></td></tr>`).join("")}</table>`;
+}
+function renderStaged(){
+  const el=$("staged-box"); if(!el||!WS) return;
+  const p=WS.pending_payments;
+  if(!WS.case && !WS.staged_payments){ el.innerHTML=`<small>No case is loaded. Load the demo case or a use case, build one in Use Cases, or upload files - the staged payments will appear here, ready to run.</small>`; return }
+  if(!p.length){ el.innerHTML=`<small>All ${WS.staged_payments} staged payments of this case have been run${WS.latest_run?` - latest run <b>${esc(WS.latest_run.run_id)}</b> is in the history below and on the Dashboard`:""}. Load another case or reset the workspace to run again.</small>`; return }
+  el.innerHTML=stagedTable(p)+`<small>${p.length} of ${WS.staged_payments} staged payments are waiting to run.</small>`;
+}
+function renderUpStaged(){
+  const el=$("up-staged"); if(!el||!WS) return;
+  const p=WS.pending_payments, settled=WS.staged_payments-p.length;
+  if(!WS.staged_payments){ el.innerHTML=`<small>Nothing staged yet. Import payments above and they will be staged here and reconciled immediately - then inspect them on the Run page.</small>`; return }
+  el.innerHTML=(p.length?stagedTable(p):"")+`<small>${WS.staged_payments} payments staged in the active case${WS.case?` (${esc(WS.case.name)})`:""}: ${p.length} pending, ${settled} already run.</small>`;
+}
+async function loadCase(cid,btn,opts={}){
+  if(btn)btn.disabled=true;
+  try{
+    sessionStorage.removeItem("ac-empty");
+    const d=await api(`/api/v1/cases/${cid}/load`,{method:"POST"});
+    WS=d.workspace; casePayments=d.payments; seedPayments=d.payments; lastRun=null; renderCasebar();
+    toast(`Case loaded: ${d.workspace.case.name} - ${d.workspace.open_invoices} invoices, ${d.payments.length} payments staged`);
+    if(d.workspace.case.policy_note) setTimeout(()=>toast(d.workspace.case.policy_note),600);
+    if(!opts.stay){ go("run") } else { refreshDash() }
+  }catch(e){ toast("Load failed: "+e.message) }finally{ if(btn)btn.disabled=false }
+}
+async function loadCaseAndRun(cid,btn){
+  await loadCase(cid,btn,{stay:true}); go("run"); setTimeout(()=>runLive($("live-btn")),450);
+}
+async function resetWorkspace(btn){
+  if(btn)btn.disabled=true;
+  try{
+    sessionStorage.setItem("ac-empty","1"); BRIEF_RUN=null;
+    WS=await api("/api/v1/workspace/reset",{method:"POST"}); casePayments=[]; seedPayments=null; lastRun=null; lastMatches=[];
+    DESK=[]; CHASE=[];
+    renderCasebar(); const g=$("grade-out"); if(g)g.innerHTML="";
+    // Back to the original state everywhere: no run, no matches, no desk,
+    // no approvals from the previous case may stay on any page.
+    ["run-summary","matches","exceptions","match-detail","dispute-desk","run-brief","live-log","impact-body","agent-pipe","agent-inspect"].forEach(id=>{const el=$(id); if(el)el.innerHTML=""});
+    const ap=$("approvals"); if(ap)ap.innerHTML=""; const ac=$("appr-count"); if(ac)ac.style.display="none";
+    toast("Workspace cleared - nothing is staged. Load a case to begin.");
+    await refreshDash(); loadApprovals(); renderSuggestions();
+  }catch(e){ toast("Reset failed: "+e.message) }finally{ if(btn)btn.disabled=false }
+}

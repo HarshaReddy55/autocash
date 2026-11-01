@@ -1,0 +1,51 @@
+"""Agent pipeline steps + approval fingerprints (v8)."""
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+os.environ.setdefault("AUTOCASH_DATA_DIR", os.path.join(os.path.dirname(__file__), "api_data"))
+from fastapi.testclient import TestClient
+import api as api_mod
+
+client = TestClient(api_mod.app)
+
+
+def _seed_run():
+    client.post("/api/v1/workspace/reset")
+    client.post("/api/v1/cases/seed/load")
+    ws = client.get("/api/v1/workspace").json()
+    r = client.post("/api/v1/batches", json={
+        "idempotency_key": "agents-test-1", "payments": ws["pending_payments"]})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_run_agents_pipeline_recorded():
+    b = _seed_run()
+    r = client.get(f"/api/v1/runs/{b['run_id']}/agents")
+    assert r.status_code == 200, r.text
+    agents = r.json()["agents"]
+    names = [a["agent"] for a in agents]
+    assert names == ["Capture Agent", "Linking Agent", "Matching Agent",
+                     "Deduction Agent", "Policy Agent", "Briefing Agent"], names
+    by = {a["agent"]: a for a in agents}
+    assert by["Capture Agent"]["evidence"]["payments_received"] == 16
+    assert by["Capture Agent"]["evidence"]["duplicates_blocked"] == 1  # P5 duplicates P1
+    assert by["Matching Agent"]["evidence"]["exact_matches"] >= 10
+    assert by["Matching Agent"]["evidence"]["milp_latency_ms_total"] > 0
+    assert by["Policy Agent"]["evidence"]["held_for_maker_checker"] == 2  # P7 + P16
+    assert by["Briefing Agent"]["status"] == "ON_DEMAND"
+
+
+def test_approval_decision_carries_fingerprint():
+    _seed_run()
+    appr = client.get("/api/v1/approvals").json()
+    assert appr, "seed run must leave held matches"
+    mid = appr[0]["match_id"]
+    r = client.post(f"/api/v1/matches/{mid}/decision", json={"decision": "approve"})
+    assert r.status_code == 200, r.text
+    fp = r.json()["fingerprint"]
+    assert len(fp) == 64 and all(c in "0123456789abcdef" for c in fp)
+    audit = client.get("/api/v1/audit").json()
+    entry = next(a for a in audit if a["entity_id"] == mid and a["action"] == "match_approved")
+    assert entry["payload"]["fingerprint"] == fp
+    r2 = client.post(f"/api/v1/matches/{mid}/decision", json={"decision": "approve"})
+    assert r2.status_code == 409

@@ -29,7 +29,7 @@ def test_case_load_makes_one_shared_workspace():
 def test_load_replaces_previous_case():
     c.post("/api/v1/cases/seed/load")
     ws = c.get("/api/v1/workspace").json()
-    assert ws["case"]["id"] == "seed" and ws["open_invoices"] == 8
+    assert ws["case"]["id"] == "seed" and ws["open_invoices"] == 19
     c.post("/api/v1/cases/duplicate-guard/load")
     ws = c.get("/api/v1/workspace").json()
     assert ws["case"]["id"] == "duplicate-guard" and ws["open_invoices"] == 16

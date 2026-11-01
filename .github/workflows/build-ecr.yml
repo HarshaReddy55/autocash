@@ -17,7 +17,28 @@ env:
   ECR_REPOSITORY: autocash
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Run the pytest suite
+        run: python -m pytest backend/tests -q
+
+      - name: Build the Rust kernel and run its tests
+        run: cargo test --manifest-path rust-kernel/Cargo.toml
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

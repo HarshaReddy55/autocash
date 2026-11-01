@@ -21,7 +21,11 @@ def generate_history(n=1200, seed=42):
         amount = float(rng.lognormal(9.5, 0.8)) * 100  # cents-ish scale -> dollars below
         month = int(rng.integers(1, 13))
         base_delay = CUSTOMER_PROFILES[cust]
-        delay = base_delay + 0.00002 * amount + (3.0 if month in (3, 6, 9, 12) else 0.0) + rng.normal(0, 3.5)
+        # amount effect: 2 extra days per $10,000 of invoice value
+        # (0.000002 per cent). At 0.00002 the effect ran 100x too hot:
+        # a $96k invoice "learned" to pay 200+ days late, which made
+        # every forecast downstream of this model meaningless.
+        delay = base_delay + 0.000002 * amount + (3.0 if month in (3, 6, 9, 12) else 0.0) + rng.normal(0, 3.5)
         delay = max(-5.0, delay)
         # deduction validity: valid when POD clean and claim size moderate relative to history
         pod_clean = rng.random() < 0.6

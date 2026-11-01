@@ -59,7 +59,7 @@ SECTIONS = [
         "title": "Cash-in forecast and collections priority",
         "what": "The delay model predicts days-to-pay per invoice; the forecast turns those predictions into planning bands, and collections turns them into a work queue.",
         "formulae": [
-            {"name": "Delay model", "expr": "gradient-boosted regressor over customer, amount and seasonality features; graded on a time-ordered 80/20 holdout: MAE 3.42 days vs 25.78 for the naive baseline (shown live on Agent Health)"},
+            {"name": "Delay model", "expr": "gradient-boosted regressor over customer, amount and seasonality features; graded on a time-ordered 80/20 holdout: MAE 2.95 days vs 7.67 for the naive baseline (shown live on Agent Health)"},
             {"name": "Bands", "expr": "per invoice, payment timing is sampled around its predicted date; weekly totals across samples give P10 / P50 / P90 - the band is the honest output, a single date would be false precision"},
             {"name": "Collections score", "expr": "score = amount x (1 + overdue_days / 30) x (1 + max(predicted_delay, 0) / 20) - value at risk, so big, late, slow-paying invoices surface first"},
         ],

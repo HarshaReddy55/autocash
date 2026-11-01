@@ -56,7 +56,7 @@ exception with a recommended action - never a silent write-off.
 - Evaluations: MILP match accuracy 100% vs greedy 80%; exact ($0 residual)
   rate 100% on the labelled scenario set (split, PO-won, discount+deduction,
   exact cases). Basis: synthetic seed scenarios, computed live per call.
-- Delay model: MAE 3.42 days vs 25.78 days naive baseline; deduction validity
+- Delay model: MAE 2.95 days vs 7.67 days naive baseline; deduction validity
   AUC 0.846. Basis: synthetic generator with learnable signal, 80/20
   time-ordered holdout (960 train / 240 test rows).
 - Test suite: 19 pytest tests + 4 Rust unit tests, all passing, repeatable.

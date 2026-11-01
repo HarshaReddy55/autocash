@@ -16,12 +16,15 @@ from methodology import SECTIONS as METHODOLOGY
 from batch import run_batch
 from anomaly import payment_fingerprint
 from solvers import solve_milp, solve_greedy, why_not_invoice
-from ai import parse_remittance, GeminiClient
+from ai import parse_remittance, GeminiClient, AI_BUDGET
 from briefing import run_brief, draft_message
 from copilot import answer as copilot_answer
 from seed import seed_invoices, seed_payments, GROUND_TRUTH
 import ml as mlmod
 from forecast import forecast_cash_in, prioritise_collections
+from mail import mail_config, reminder_draft, send_mail
+from erp_sap import build_posting_document, dispute_accrual_journal
+import rust_bridge
 
 DATA_DIR = os.environ.get("AUTOCASH_DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data"))
 from tenants import TenantStore, ROLE_CAPS
@@ -39,24 +42,47 @@ def repo_for(tenant_id):
         _repos[tenant_id] = Repository(store.db_path(tenant_id))
     return _repos[tenant_id]
 
-from fastapi import Header, HTTPException, Depends
-from fastapi.responses import StreamingResponse
+from fastapi import Header, HTTPException, Depends, Request
+from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 import queue as _queue, threading as _threading, time as _time
 
-def auth_context(x_api_key: str = Header(default="")):
+DEMO_TENANTS = [
+    {"id": "demo", "name": "Demo workspace - US", "erp": "SAP S/4HANA"},
+    {"id": "demo-eu", "name": "Demo workspace - EU", "erp": "Oracle NetSuite"},
+]
+
+import re as _re
+_SESSION_RE = _re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+def auth_context(x_api_key: str = Header(default=""), x_tenant_id: str = Header(default=""),
+                 x_workspace_session: str = Header(default="")):
     """Returns {tenant_id, role}. Dev mode: when no bootstrap key and no keys
     exist yet for the store, requests map to the built-in demo tenant so the
     product runs locally without setup. In production set AUTOCASH_BOOTSTRAP_KEY
-    and issue tenant keys; dev mode then disables automatically once any key exists."""
-    any_keys = store.conn.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0] > 0
+    and issue tenant keys; dev mode then disables automatically once any key exists.
+    The X-Tenant-Id header is honoured ONLY in dev-open mode, and only for the
+    two demo tenants, so the UI can demonstrate database-per-tenant isolation.
+    The X-Workspace-Session header (a per-tab UUID the frontend generates) is
+    also dev-open only: it clones the demo tenant's workspace per browser
+    session, so two people opening the public link at the same time never
+    wipe each other's screen. With real API keys both headers are ignored
+    and the key alone decides the tenant."""
+    any_keys = store.key_count() > 0
     if not any_keys and not BOOTSTRAP_KEY:
-        if not store.tenant_exists("demo"):
-            store.conn.execute("INSERT OR IGNORE INTO tenants VALUES ('demo','Demo workspace',0)"); store.conn.commit()
-        return {"tenant_id": "demo", "role": "admin", "mode": "dev-open"}
+        chosen = next((t for t in DEMO_TENANTS if t["id"] == x_tenant_id), DEMO_TENANTS[0])
+        store.ensure_tenant(chosen["id"], chosen["name"])
+        effective = chosen["id"]
+        if _SESSION_RE.match(x_workspace_session or ""):
+            effective = f"{chosen['id']}--{x_workspace_session[:8]}"
+        return {"tenant_id": effective, "base_tenant": chosen["id"],
+                "session": x_workspace_session[:8] if effective != chosen["id"] else None,
+                "role": "admin", "mode": "dev-open"}
     ctx = store.resolve(x_api_key)
     if ctx is None:
         raise HTTPException(401, "invalid or missing API key")
     ctx["mode"] = "key"
+    ctx["base_tenant"] = ctx["tenant_id"]
+    ctx["session"] = None
     return ctx
 
 def need(ctx, cap):
@@ -97,9 +123,11 @@ def _pay(p: PaymentIn) -> Payment:
 
 @app.get("/health")
 def health():
+    from ai import LAST_GEMINI_ERROR
     return {"status": "ok", "gemini_configured": GeminiClient().available,
+            "gemini_last_error": LAST_GEMINI_ERROR["error"],
             "model_metrics": models()["metrics"], "data_dir": os.path.basename(DATA_DIR),
-            "auth": "api-key" if (BOOTSTRAP_KEY or store.conn.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]) else "dev-open"}
+            "auth": "api-key" if (BOOTSTRAP_KEY or store.key_count()) else "dev-open"}
 
 @app.post("/api/v1/seed")
 def seed(ctx=Depends(auth_context)):
@@ -149,7 +177,7 @@ def _load_case(repo, cid, actor):
     this one workspace."""
     if cid == "seed":
         invs, pays = seed_invoices(), seed_payments()
-        name, source = "Demo seed workspace", "demo-seed"
+        name, source = "Demo case - one realistic day of receipts", "demo-seed"
         expect = {pid: {"invoices": sorted(s)} for pid, s in GROUND_TRUTH.items()}
         expect_exc = {}
     else:
@@ -170,6 +198,12 @@ def _load_case(repo, cid, actor):
     meta = {"id": cid, "name": name, "source": source,
             "loaded_at": _now_iso(), "expect": expect,
             "expect_exceptions": expect_exc}
+    if source == "demo-seed":
+        # The demo day is judged the way a real book would be: the
+        # maker-checker hold sits at $60,000 so exactly the two clean big
+        # wires wait for an approver and the rest of the day flows.
+        meta["policy"] = {"maker_checker_threshold_cents": 6000000}
+        meta["policy_note"] = "Demo policy: the maker-checker hold is $60,000 for this case (the product default is $100,000 - change it in Policy Studio), so two clean big wires wait for an approver and everything else flows."
     if source == "use-case":
         # Same grading policy as the scenario endpoint: the maker-checker
         # threshold is raised while a pack is the active case, so the run's
@@ -434,12 +468,34 @@ def match_decision(match_id: str, body: DecisionIn, ctx=Depends(auth_context)):
     if m["status"] != "PROPOSED": raise HTTPException(409, f"match is {m['status']}, not PROPOSED")
     if body.decision not in ("approve", "reject"): raise HTTPException(422, "decision must be approve or reject")
     res = m["result"]
-    res["approval"] = {"decision": body.decision, "by_role": ctx["role"], "at": _now_iso()}
+    decided_at = _now_iso()
+    # A content fingerprint over the decision record: anyone holding the
+    # audit entry can recompute it and prove the entry was not altered.
+    fingerprint = hashlib.sha256(
+        f"{match_id}|{m['payment_id']}|{body.decision}|{ctx['role']}|{decided_at}".encode()
+    ).hexdigest()
+    erp_document_id = None
+    settled = []
+    if body.decision == "approve":
+        # The posting document reference for this approval, derived from
+        # the decision fingerprint - the ERP preview on the match shows
+        # the same id, so the approval and the document can be tied
+        # together by anyone holding either one.
+        erp_document_id = "DZ-" + fingerprint[:10].upper()
+        settled = [l["invoice_id"] for l in (res.get("lines") or [])]
+        repo.settle_invoices(settled)
+    res["approval"] = {"decision": body.decision, "by_role": ctx["role"],
+                       "at": decided_at, "fingerprint": fingerprint,
+                       "erp_document_id": erp_document_id,
+                       "settled_invoices": settled}
     new_status = "APPROVED_POSTED" if body.decision == "approve" else "REJECTED"
     repo.update_match(match_id, new_status, res)
     repo.audit(f"api:{ctx['role']}", f"match_{body.decision}d", "match", match_id,
-               {"payment_id": m["payment_id"], "run_id": m["run_id"]}, _now_iso())
-    return {"match_id": match_id, "status": new_status}
+               {"payment_id": m["payment_id"], "run_id": m["run_id"],
+                "fingerprint": fingerprint, "erp_document_id": erp_document_id,
+                "settled_invoices": settled}, decided_at)
+    return {"match_id": match_id, "status": new_status, "fingerprint": fingerprint,
+            "erp_document_id": erp_document_id, "settled_invoices": settled}
 
 @app.get("/api/v1/audit")
 def audit_trail(ctx=Depends(auth_context)):
@@ -453,15 +509,37 @@ def run_matches(run_id: str, ctx=Depends(auth_context)):
 def run_exceptions(run_id: str, ctx=Depends(auth_context)):
     need(ctx, "read"); return repo_for(ctx["tenant_id"]).exceptions_for_run(run_id)
 
+AGENT_ORDER = ["Capture Agent", "Linking Agent", "Matching Agent",
+               "Deduction Agent", "Policy Agent", "Briefing Agent"]
+
+@app.get("/api/v1/runs/{run_id}/agents")
+def run_agents(run_id: str, ctx=Depends(auth_context)):
+    """The six-agent pipeline for one run, from the steps the engine
+    recorded while it worked - status, measured latency, and the
+    evidence payload each agent handed to the next."""
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    steps = repo.steps_for_run(run_id)
+    by_agent = {s["agent"]: s for s in steps}
+    agents = [by_agent[a] for a in AGENT_ORDER if a in by_agent]
+    legacy = [s for s in steps if s["agent"] not in AGENT_ORDER]
+    return {"run_id": run_id, "agents": agents, "legacy_steps": legacy}
+
 @app.post("/api/v1/parse")
-def parse(body: ParseIn, ctx=Depends(auth_context)):
+def parse(body: ParseIn, request: Request, ctx=Depends(auth_context)):
     need(ctx, "parse"); invs = repo_for(ctx["tenant_id"]).open_invoices()
+    client, budget = _gemini_for(request)
     t0 = _time.perf_counter()
-    out = parse_remittance(body.text, {i.invoice_id for i in invs}, {i.po_number for i in invs if i.po_number})
+    out = parse_remittance(body.text, {i.invoice_id for i in invs}, {i.po_number for i in invs if i.po_number},
+                           client=client)
     extract_ms = round((_time.perf_counter() - t0) * 1000, 1)
     f = out["fields"]; v = out["verification"]
     checked = len(f.get("invoice_refs", [])) + len(f.get("po_refs", []))
     out["ai_mode"] = "gemini" if out["source"] == "gemini" else "deterministic"
+    out["ai_budget"] = budget
+    if budget == "exhausted":
+        out["ai_note"] = ("This address has used its per-minute AI budget on the "
+                          "public demo, so the deterministic parser answered. "
+                          "Nothing is blocked - the same fields, verified the same way.")
     out["pipeline"] = [
         {"stage": "1. Extract", "engine": out["source"], "ms": extract_ms,
          "detail": "AI reads the free text and proposes structured fields" if out["source"] == "gemini"
@@ -476,26 +554,213 @@ def parse(body: ParseIn, ctx=Depends(auth_context)):
     return out
 
 @app.get("/api/v1/runs/{run_id}/brief")
-def run_brief_ep(run_id: str, ctx=Depends(auth_context)):
+def run_brief_ep(run_id: str, request: Request, ctx=Depends(auth_context)):
     """The agent's own brief of a finished run - what it posted, what it
     held and why, and what a human should do next."""
     need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
     if run_id not in {r["run_id"] for r in repo.list_runs(50)}:
         raise HTTPException(404, "unknown run")
-    return run_brief(repo, run_id)
+    client, _budget = _gemini_for(request)
+    return run_brief(repo, run_id, client=client)
 
 class DraftIn(BaseModel):
     kind: str = "dispute_email"; tone: str = "strict"; facts: dict = {}
 
 @app.post("/api/v1/ai/draft")
-def ai_draft(body: DraftIn, ctx=Depends(auth_context)):
+def ai_draft(body: DraftIn, request: Request, ctx=Depends(auth_context)):
     """Draft a dispute email or a negotiation rebuttal from case facts.
     Gemini rewrites when a key is configured; the grounded template is
     the fallback and the source is always returned."""
     need(ctx, "run")
-    if body.kind not in ("dispute_email", "rebuttal"):
-        raise HTTPException(422, "kind must be dispute_email or rebuttal")
-    return draft_message(body.kind, body.tone, body.facts or {})
+    if body.kind not in ("dispute_email", "rebuttal", "chase_email"):
+        raise HTTPException(422, "kind must be dispute_email, rebuttal or chase_email")
+    client, _budget = _gemini_for(request)
+    return draft_message(body.kind, body.tone, body.facts or {}, client=client)
+
+@app.get("/api/v1/tenants/demo")
+def demo_tenants(ctx=Depends(auth_context)):
+    return {"switching_enabled": ctx.get("mode") == "dev-open",
+            "active": ctx.get("base_tenant", ctx["tenant_id"]),
+            "session": ctx.get("session"),
+            "tenants": DEMO_TENANTS,
+            "note": ("Each tenant has its own database - invoices, payments, runs, "
+                     "policy and keys never cross. On top of that, every browser "
+                     "session gets its own clone of the demo workspace, so two "
+                     "people opening the public link at the same time never wipe "
+                     "each other's screen. Switching and sessions are enabled in "
+                     "this open demo; with API keys issued, the key decides the "
+                     "tenant and both headers are ignored.")}
+
+def _client_ip(request):
+    fwd = request.headers.get("x-forwarded-for", "")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+def _gemini_for(request):
+    """(client, budget_state) for one request. When this IP is over its
+    Gemini budget, the client is disabled and every AI feature answers
+    from its deterministic path instead of erroring."""
+    if AI_BUDGET.allow(_client_ip(request)):
+        return GeminiClient(), "ok"
+    return GeminiClient(api_key=""), "exhausted"
+
+@app.get("/api/v1/payments/{payment_id}/erp-document")
+def erp_document(payment_id: str, ctx=Depends(auth_context)):
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    m = repo.latest_match_for_payment(payment_id)
+    if not m: raise HTTPException(404, "no match recorded for this payment yet")
+    res = m["result"]
+    doc_id = (res.get("approval") or {}).get("erp_document_id")
+    doc = build_posting_document(res, res.get("payment") or {"payment_id": payment_id},
+                                 document_number=doc_id)
+    out = {"match_id": m["match_id"], "run_id": m["run_id"], "status": m["status"],
+           "document": doc}
+    ded = res.get("deduction") or {}
+    if ded.get("autonomous_action") == "AUTO_GENERATE_DISPUTE_CLAIM":
+        out["revrec_accrual"] = dispute_accrual_journal(ded)
+    return out
+
+@app.get("/api/v1/diagnostics")
+def diagnostics(ctx=Depends(auth_context)):
+    need(ctx, "read")
+    import random
+    binpath = os.environ.get("AUTOCASH_KERNEL_BIN", "")
+    kernel_present = bool(binpath and os.path.exists(binpath))
+    probe = {"cases": 0, "agree": 0, "status": "kernel_absent"}
+    if kernel_present:
+        rng = random.Random(20261101)
+        cases = agree = 0
+        for _ in range(24):
+            invs = [{"invoice_id": f"I{i}", "gross_cents": rng.randrange(500, 90000),
+                     "age_days": rng.randrange(1, 120)} for i in range(rng.randrange(3, 9))]
+            target = sum(i["gross_cents"] for i in invs[:2]) + rng.randrange(0, 5000)
+            py = rust_bridge.best_subset_py(target, invs)
+            rs = rust_bridge.best_subset_rust(target, invs)
+            cases += 1
+            if rs and rs["selected_ids"] == py["selected_ids"] \
+               and rs["selected_sum_cents"] == py["selected_sum_cents"]:
+                agree += 1
+        probe = {"cases": cases, "agree": agree,
+                 "status": "pass" if agree == cases else "fail"}
+    tests_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests")
+    modules = []
+    if os.path.isdir(tests_dir):
+        modules = sorted(f[:-3] for f in os.listdir(tests_dir)
+                         if f.startswith("test_") and f.endswith(".py"))
+    from ai import LAST_GEMINI_ERROR
+    return {
+        "rust_kernel": {"binary": binpath or None, "present": kernel_present,
+                        "bridge": "rust_bridge.py - the Rust binary is called over stdio with a JSON payload",
+                        "equivalence_probe": probe,
+                        "equivalence_suite": "test_rust_equivalence.py compares the Rust kernel with the Python reference on 203 generated cases; it runs in the repository suite and in CI"},
+        "milp": {"solver": "HiGHS, via scipy.optimize.milp",
+                 "exact_recheck": "every MILP result is re-verified in exact integer cents before it is used; a set that is even one cent off is rejected"},
+        "test_suite": {"modules": modules, "module_count": len(modules),
+                       "ci": "GitHub Actions runs pytest and cargo test before every image build"},
+        "ai": {"gemini_configured": GeminiClient().available,
+               "gemini_last_error": LAST_GEMINI_ERROR["error"]},
+        "mail": mail_config(),
+    }
+
+@app.get("/api/v1/export/bundle")
+def export_bundle(ctx=Depends(auth_context)):
+    """The month-end artifact: one JSON file holding the active case, the
+    latest run with every match's full MILP derivation, the exceptions,
+    the maker-checker audit trail (fingerprints included), and the SAP
+    posting document for every match, built by erp_sap."""
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    ws = _workspace_state(repo)
+    bundle = {"product": "AutoCash",
+              "kind": "executive-audit-and-sap-clearing-bundle",
+              "generated_at": _now_iso(),
+              "tenant": ctx.get("base_tenant", ctx["tenant_id"]),
+              "case": ws.get("case"),
+              "workspace": {"open_invoices": ws["open_invoices"],
+                            "staged_payments": ws["staged_payments"],
+                            "pending_payments": len(ws["pending_payments"]),
+                            "approvals_pending": ws["approvals_pending"]},
+              "model_metrics": models()["metrics"]}
+    runs = repo.list_runs(1)
+    if runs:
+        run = runs[0]
+        matches = repo.matches_for_run(run["run_id"])
+        docs = {}
+        for m in matches:
+            res = m["result"]
+            if res.get("lines"):
+                docs[m["payment_id"]] = build_posting_document(
+                    res, res.get("payment") or {"payment_id": m["payment_id"]},
+                    document_number=(res.get("approval") or {}).get("erp_document_id"))
+        bundle["run"] = run
+        bundle["matches"] = matches
+        bundle["exceptions"] = repo.exceptions_for_run(run["run_id"])
+        bundle["sap_documents"] = docs
+    bundle["audit_trail"] = repo.audit_list(300)
+    return JSONResponse(bundle, headers={
+        "Content-Disposition": 'attachment; filename="autocash-audit-bundle.json"'})
+
+@app.get("/api/v1/export/matches.csv")
+def export_matches_csv(ctx=Depends(auth_context)):
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    import csv as _csv, io as _io
+    buf = _io.StringIO(); w = _csv.writer(buf)
+    w.writerow(["run_id", "payment_id", "status", "solver", "invoices",
+                "gross_cents", "discount_cents", "net_applied_cents",
+                "residual_cents", "confidence", "erp_document_id"])
+    runs = repo.list_runs(1)
+    if runs:
+        for m in repo.matches_for_run(runs[0]["run_id"]):
+            res = m["result"]; lines = res.get("lines") or []
+            w.writerow([runs[0]["run_id"], m["payment_id"], m["status"], m.get("solver") or res.get("solver", ""),
+                        " ".join(l["invoice_id"] for l in lines),
+                        sum(l["gross_cents"] for l in lines),
+                        sum(l.get("discount_cents") or 0 for l in lines),
+                        sum(l["net_cents"] for l in lines),
+                        m["residual_cents"], m["confidence"],
+                        (res.get("approval") or {}).get("erp_document_id") or ""])
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="autocash-matches.csv"'})
+
+def _docs_dir():
+    env = os.environ.get("AUTOCASH_DOCS_DIR", "")
+    cands = [env] if env else []
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands += [os.path.join(here, "..", "..", "docs"), "/app/docs"]
+    for c in cands:
+        if c and os.path.isdir(c): return c
+    return None
+
+@app.get("/api/v1/docs")
+def docs_list(ctx=Depends(auth_context)):
+    need(ctx, "read")
+    d = _docs_dir()
+    if not d: return {"docs": [], "note": "docs directory not present in this deployment"}
+    out = []
+    for f in sorted(os.listdir(d)):
+        if not f.endswith(".md"): continue
+        path = os.path.join(d, f)
+        title = f[:-3].replace("_", " ")
+        try:
+            with open(path) as fh:
+                for line in fh:
+                    if line.startswith("# "):
+                        title = line[2:].strip(); break
+        except OSError:
+            pass
+        out.append({"name": f, "title": title, "bytes": os.path.getsize(path)})
+    return {"docs": out}
+
+@app.get("/api/v1/docs/{name}")
+def docs_read(name: str, ctx=Depends(auth_context)):
+    need(ctx, "read")
+    d = _docs_dir()
+    if not d or "/" in name or "\\" in name or not name.endswith(".md"):
+        raise HTTPException(404, "unknown document")
+    path = os.path.join(d, name)
+    if not os.path.isfile(path): raise HTTPException(404, "unknown document")
+    with open(path) as fh:
+        return {"name": name, "markdown": fh.read()}
 
 @app.post("/api/v1/copilot")
 def copilot(body: CopilotIn, ctx=Depends(auth_context)):
@@ -506,9 +771,71 @@ def forecast(ctx=Depends(auth_context)):
     need(ctx, "read"); invs = repo_for(ctx["tenant_id"]).open_invoices()
     return forecast_cash_in(invs, models()["delay_model"]) if invs else {"weeks": [], "invoices": []}
 
+class WhatifIn(BaseModel):
+    customer: str; shift_days: int = 0
+
+@app.post("/api/v1/forecast/whatif")
+def forecast_whatif(body: WhatifIn, ctx=Depends(auth_context)):
+    """What-if: what happens to expected cash if one customer pays N days
+    earlier or later? Recomputed from the same model and the same ledger -
+    a planning answer, not a saved scenario."""
+    need(ctx, "read"); invs = repo_for(ctx["tenant_id"]).open_invoices()
+    if not invs:
+        raise HTTPException(404, "no open invoices in this workspace")
+    if body.customer not in {i.customer for i in invs}:
+        raise HTTPException(422, f"unknown customer {body.customer}")
+    shift = max(-21, min(21, body.shift_days))
+    base = forecast_cash_in(invs, models()["delay_model"])
+    moved = forecast_cash_in(invs, models()["delay_model"],
+                             shift_customer=body.customer, shift_days=shift)
+    return {"customer": body.customer, "shift_days": shift,
+            "base_expected_horizon_cents": base["summary"]["expected_horizon_cents"],
+            "shifted_expected_horizon_cents": moved["summary"]["expected_horizon_cents"],
+            "delta_cents": moved["summary"]["expected_horizon_cents"] - base["summary"]["expected_horizon_cents"],
+            "base_expected_30_cents": base["summary"]["expected_30_cents"],
+            "shifted_expected_30_cents": moved["summary"]["expected_30_cents"],
+            "delta_30_cents": moved["summary"]["expected_30_cents"] - base["summary"]["expected_30_cents"],
+            "weeks": [{"week": b["week"], "base_p50_cents": b["p50_cents"],
+                       "shifted_p50_cents": m["p50_cents"]}
+                      for b, m in zip(base["weeks"], moved["weeks"])]}
+
 @app.get("/api/v1/collections")
 def collections(ctx=Depends(auth_context)):
     need(ctx, "read"); return prioritise_collections(repo_for(ctx["tenant_id"]).open_invoices(), models()["delay_model"])
+
+# ---- Mail: send the product's drafts, with an honest outbox ----
+class MailSendIn(BaseModel):
+    to: str; subject: str; body: str; kind: str = "other"; ref_id: str = ""
+
+class ReminderIn(BaseModel):
+    invoice_id: str
+
+@app.post("/api/v1/mail/reminder")
+def mail_reminder(body: ReminderIn, ctx=Depends(auth_context)):
+    """A collection reminder drafted from the ledger row itself."""
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    inv = next((i for i in repo.open_invoices() if i.invoice_id == body.invoice_id), None)
+    if inv is None:
+        raise HTTPException(404, f"invoice {body.invoice_id} is not open in this workspace")
+    return reminder_draft(inv)
+
+@app.post("/api/v1/mail/send")
+def mail_send(body: MailSendIn, ctx=Depends(auth_context)):
+    """Send (or, until a mailbox is configured, record) one mail.
+    The outbox record always carries the true status."""
+    need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    try:
+        return send_mail(repo, f"api:{ctx['role']}", body.to, body.subject,
+                         body.body, body.kind, body.ref_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+@app.get("/api/v1/mail/outbox")
+def mail_outbox(ctx=Depends(auth_context)):
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    cfg = mail_config()
+    return {"configured": cfg["configured"], "from": cfg["from"],
+            "mails": repo.list_outbox(50)}
 
 @app.post("/api/v1/why-not")
 def why_not(body: WhyNotIn, ctx=Depends(auth_context)):
@@ -579,6 +906,65 @@ def put_policy(body: PolicyIn, ctx=Depends(auth_context)):
     store.set_policy(ctx["tenant_id"], body.policy)
     return {"saved": True}
 
+@app.post("/api/v1/policy/preview")
+def policy_preview(body: PolicyIn, ctx=Depends(auth_context)):
+    """Dry-run the workspace's full book and batch under a candidate
+    policy on a throwaway copy of the ledger, and diff the outcome
+    against the latest stored run. Nothing in the real workspace is
+    written: this answers 'what would this policy change do to the
+    run I already have?' with the real engine, not an estimate."""
+    need(ctx, "run")
+    repo = repo_for(ctx["tenant_id"])
+    Policy(**body.policy)  # validate
+    candidate = dict(body.policy)
+    # The active case's disclosed override normally sits on top of the
+    # tenant policy - but a key the user has just EDITED in the form is
+    # the change being previewed, so edited keys win over the override.
+    stored = store.get_policy(ctx["tenant_id"]) or {}
+    edited = {k for k, v in body.policy.items() if stored.get(k) != v}
+    case = repo.get_meta("active_case") or {}
+    for k, v in (case.get("policy") or {}).items():
+        if k not in edited:
+            candidate[k] = v
+    runs = repo.list_runs(1)
+    if not runs:
+        return {"base_run_id": None, "note": "No run yet - nothing to diff against."}
+    base_run = runs[0]
+    before = {m["payment_id"]: m["status"] for m in repo.matches_for_run(base_run["run_id"])}
+    amounts = {p.payment_id: p.amount_cents for p in repo.all_payments()}
+    import tempfile, shutil as _sh
+    tmpdir = tempfile.mkdtemp(prefix="autocash-preview-")
+    try:
+        trepo = Repository(os.path.join(tmpdir, "preview.db"))
+        for inv in repo.all_invoices():
+            trepo.add_invoice(inv)
+        for pay in repo.all_payments():
+            trepo.add_payment(pay, "")
+        for row in repo.conn.execute("SELECT raw_name, customer, source FROM aliases").fetchall():
+            trepo.conn.execute("INSERT OR REPLACE INTO aliases VALUES (?,?,?)", row)
+        trepo.conn.commit()
+        out = run_batch(trepo, trepo.all_payments(), Policy(**candidate),
+                        "preview-" + uuid.uuid4().hex[:10], actor="policy-preview")
+        after = {m["payment_id"]: m["status"] for m in trepo.matches_for_run(out["run_id"])}
+        exc_after = len(trepo.exceptions_for_run(out["run_id"]))
+        trepo.conn.close()
+    finally:
+        _sh.rmtree(tmpdir, ignore_errors=True)
+    posted = ("AUTO_POSTED", "APPROVED_POSTED")
+    moved_hold = [{"payment_id": pid, "amount_cents": amounts.get(pid, 0)}
+                  for pid in before if before[pid] in posted and after.get(pid) not in posted]
+    moved_auto = [{"payment_id": pid, "amount_cents": amounts.get(pid, 0)}
+                  for pid in after if after[pid] in posted and before.get(pid) not in posted]
+    return {"base_run_id": base_run["run_id"],
+            "evaluated_payments": len(after),
+            "auto_before": sum(1 for s in before.values() if s in posted),
+            "auto_after": sum(1 for s in after.values() if s in posted),
+            "posted_value_before_cents": sum(amounts.get(p, 0) for p, s in before.items() if s in posted),
+            "posted_value_after_cents": sum(amounts.get(p, 0) for p, s in after.items() if s in posted),
+            "moved_to_approvals": moved_hold, "moved_to_auto": moved_auto,
+            "exceptions_after": exc_after,
+            "note": "Computed by re-running the real engine on a scratch copy of this workspace. The stored policy and the workspace were not changed."}
+
 
 # ---- Observability: request ids, structured logs, metrics, readiness, rate limits ----
 import time as _time, uuid as _uuid, collections as _collections
@@ -630,7 +1016,9 @@ def metrics():
 def ready():
     checks = {}
     try:
-        store.conn.execute("SELECT 1").fetchone(); checks["control_db"] = "ok"
+        with store.lock:
+            store.conn.execute("SELECT 1").fetchone()
+        checks["control_db"] = "ok"
     except Exception as e: checks["control_db"] = f"error: {type(e).__name__}"
     checks["data_dir_writable"] = "ok" if os.access(DATA_DIR, os.W_OK) else "error"
     try:
