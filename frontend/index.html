@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoCash - Autonomous Cash Application Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Inter+Tight:wght@600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#232323;--bg2:#1e1e1e;--panel:#2a2a2a;--panel2:#262626;--line:#3a3a3c;--line2:#4c4c4e;--ink:#f2f0ea;--mut:#a7a49d;--mut2:#7e7c77;--blue:#3d75e8;--blue2:#7fa6f2;--ok:#34bf71;--okbg:rgba(52,191,113,.13);--warn:#f2c14e;--warnbg:rgba(242,193,78,.13);--bad:#e5484d;--badbg:rgba(229,72,77,.13);--mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:Inter,system-ui,-apple-system,Arial,sans-serif;color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.025) 0 1px,transparent 1px 9px);pointer-events:none;z-index:0}
+main{position:relative;z-index:1}
+h1,h2,.v{font-family:"Inter Tight",Inter,system-ui,sans-serif}
+h2{letter-spacing:-0.035em}
+::selection{background:rgba(61,117,232,.4)}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#3a3a3c;border:2px solid var(--bg)}::-webkit-scrollbar-track{background:transparent}
+@keyframes viewIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* ---------- top bar (Serro: slim bar, logo left, actions right) ---------- */
+.topbar{position:sticky;top:0;z-index:40;background:rgba(35,35,35,.92);backdrop-filter:blur(10px);border-bottom:1px solid var(--line);overflow:hidden}
+.rain{position:absolute;top:-90px;width:2px;pointer-events:none;animation:fall linear infinite;z-index:0}
+.r1{left:74%;height:62px;background:var(--blue);animation-duration:8s}
+.r2{left:86.5%;height:40px;background:#d8d1c9;animation-duration:11.5s;animation-delay:2.5s;opacity:.75}
+.r3{left:93%;height:88px;background:#6e6e68;animation-duration:13.5s;animation-delay:5s;opacity:.55}
+@keyframes fall{to{transform:translateY(240px)}}
+.bar1{background-image:none}
+.bar1{display:flex;align-items:center;gap:16px;max-width:1460px;margin:0 auto;padding:13px 30px 11px}
+.brand{display:flex;align-items:center;gap:13px}
+.logomark{width:34px;height:34px;border-radius:50%;background:repeating-linear-gradient(90deg,#f2f0ea 0 2px,transparent 2px 4.5px);-webkit-mask:radial-gradient(circle,#000 62%,transparent 63%);mask:radial-gradient(circle,#000 62%,transparent 63%);flex-shrink:0}
+.brand h1{font-size:21px;margin:0;letter-spacing:-.03em;font-weight:700;color:#fff}
+.brand h1 span{color:var(--blue2)}
+.brand .sub{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--mut);margin-top:2px}
+.bar1r{margin-left:auto;text-align:right}
+.bar1r .ck{display:block;font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--blue2)}
+.bar1r b{font-size:12.5px;color:#e8e8ea}
+.bar1r .cs{display:block;font-size:11px;color:var(--mut2);margin-top:1px}
+.navrow{display:flex;align-items:center;gap:2px;max-width:1460px;margin:0 auto;padding:0 30px;overflow-x:auto;border-top:1px solid var(--line);scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 94%,transparent);mask-image:linear-gradient(90deg,#000 94%,transparent)}
+.navrow::-webkit-scrollbar{display:none}
+.navrow .grp{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;color:var(--mut2);margin:0 5px 0 11px;white-space:nowrap}
+.navrow .grp:first-child{margin-left:0}
+.navrow button{display:flex;align-items:center;gap:6px;background:none;border:0;border-bottom:2px solid transparent;color:#c0beb8;padding:10px 7px;cursor:pointer;font-size:12.5px;font-family:inherit;white-space:nowrap;transition:color .18s,border-color .18s}
+.navrow button .num{font-family:var(--mono);font-size:10px;color:var(--mut2);transition:color .18s}
+.navrow button:hover{color:#fff}.navrow button:hover .num{color:var(--blue2)}
+.navrow button.active{color:#fff;border-bottom-color:var(--blue)}
+.navrow button.active .num{color:var(--blue2)}
+/* ---------- layout & views ---------- */
+.layout{display:block}
+main{padding:30px 30px 40px;max-width:1460px;margin:0 auto;width:100%}
+section{display:none}
+section.active{display:block;animation:viewIn .5s cubic-bezier(.22,.8,.3,1)}
+.eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;color:var(--blue2);margin-bottom:7px}
+.vhead{display:flex;align-items:flex-start;gap:14px;margin-bottom:6px}
+.vhead h2{margin:0;font-size:29px;letter-spacing:-.03em;font-weight:700;line-height:1.12}
+.vhead .purpose{color:var(--mut);font-size:14px;margin-top:6px;max-width:820px;line-height:1.55}
+.howbtn{margin-left:auto;background:transparent;border:1px solid var(--line2);color:#e0ded9;border-radius:2px;padding:8px 15px;font-size:12.5px;cursor:pointer;white-space:nowrap;font-family:var(--mono);letter-spacing:.04em;transition:.18s}
+.howbtn:hover{border-color:var(--blue);color:#fff}
+.how{display:none;background:rgba(61,117,232,.06);border:1px solid rgba(61,117,232,.32);border-radius:3px;padding:15px 17px;font-size:13.5px;line-height:1.65;margin:12px 0 18px;color:#c3cfe9}
+.how.open{display:block;animation:fadeUp .35s ease-out}
+.how b{color:#fff}.how code{background:rgba(255,255,255,.09);padding:1px 5px;border-radius:3px;font-size:12px;font-family:var(--mono);color:#ffd479}
+/* ---------- cards, panels, tables ---------- */
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:16px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:17px 18px;transition:border-color .18s,transform .18s;animation:fadeUp .5s ease-out backwards}
+.card:hover{border-color:var(--line2);transform:translateY(-2px)}
+.cards .card:nth-child(2){animation-delay:.05s}.cards .card:nth-child(3){animation-delay:.1s}.cards .card:nth-child(4){animation-delay:.15s}
+.card .k{font-family:var(--mono);font-size:10.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.09em}
+.card .v{font-size:28px;font-weight:700;margin-top:6px;letter-spacing:-.03em;color:#fff}
+.card .n{font-size:12px;color:var(--mut);margin-top:5px;line-height:1.5}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:19px;margin:14px 0;animation:fadeUp .5s ease-out backwards}
+.panel h3{margin:0 0 6px;font-size:16.5px;letter-spacing:-.015em;font-weight:650}
+.panel .d{color:var(--mut);font-size:13px;line-height:1.55;margin-bottom:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 11px;border-bottom:1px solid #333334;text-align:left;vertical-align:top}
+th{background:transparent;color:var(--mut);font-family:var(--mono);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid var(--line)}
+tbody tr{transition:background .15s}
+tr.clickable{cursor:pointer}tr.clickable:hover{background:#141417}
+td{color:#dcdce0}
+/* ---------- controls ---------- */
+.btn{background:var(--blue);color:#fff;border:1px solid var(--blue);padding:9px 18px;border-radius:2px;cursor:pointer;font-size:13.5px;font-weight:600;font-family:inherit;transition:.18s}
+.btn:hover{background:#4a7dff;transform:translateY(-1px)}.btn:disabled{opacity:.55;cursor:wait;transform:none}
+.btn.ghost{background:transparent;color:#e0ded9;border:1px solid var(--line2)}
+.btn.ghost:hover{border-color:var(--blue);color:#fff;background:rgba(61,117,232,.08)}
+.btn.small{padding:6px 12px;font-size:12.5px}
+.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;font-weight:500;padding:3px 8px;border-radius:2px;white-space:nowrap;letter-spacing:.02em}
+.pill.ok{background:var(--okbg);color:var(--ok)}.pill.warn{background:var(--warnbg);color:var(--warn)}.pill.bad{background:var(--badbg);color:var(--bad)}.pill.info{background:rgba(61,117,232,.14);color:var(--blue2)}.pill.grey{background:rgba(255,255,255,.07);color:#c0beb8}
+textarea,input[type=text],input[type=number],select{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:2px;font:inherit;font-size:13.5px;background:var(--bg2);color:var(--ink);transition:border-color .15s,box-shadow .15s}
+textarea:focus,input:focus,select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(61,117,232,.18)}
+textarea.csv{font-family:var(--mono);font-size:12.5px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:1000px){.cards{grid-template-columns:repeat(2,1fr)}.grid2,.grid3{grid-template-columns:1fr}.bar1r{display:none}}
+.drop{border:1.5px dashed #4a4a4d;border-radius:3px;padding:24px;text-align:center;background:var(--bg2);transition:.18s;cursor:pointer}
+.drop:hover,.drop.over{border-color:var(--blue);background:rgba(61,117,232,.06)}
+.drop .big{font-size:15px;font-weight:650}.drop .small{color:var(--mut);font-size:12.5px;margin-top:4px}
+.confbar{height:6px;background:#3a3a3c;border-radius:0;overflow:hidden;min-width:64px}.confbar>i{display:block;height:100%;background:var(--blue)}
+.checks td.p{color:var(--ok);font-weight:700}.checks td.f{color:var(--bad);font-weight:700}
+.msg{margin:10px 0;padding:12px 14px;border-radius:3px;background:var(--panel);border:1px solid var(--line);font-size:14px;line-height:1.55}
+.msg.bot{border-color:rgba(61,117,232,.4);background:#0d1120}
+.chatlog{display:flex;flex-direction:column;gap:4px}
+.sugg{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.sugg button{background:transparent;border:1px solid var(--line2);border-radius:2px;padding:6px 13px;font-size:12.5px;cursor:pointer;color:#d6d3cd;font-family:inherit;transition:.18s}
+.sugg button:hover{border-color:var(--blue);color:#fff}
+#toast{position:fixed;bottom:22px;right:22px;background:#2b2b2b;color:#fff;padding:12px 18px;border:1px solid var(--line2);border-radius:3px;font-size:13.5px;opacity:0;pointer-events:none;transition:.25s;max-width:420px;z-index:50;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+#toast.show{opacity:1}
+.detail{background:var(--bg2);border:1px solid var(--line);border-radius:3px;padding:13px 15px;margin:8px 0;font-size:13px;line-height:1.6}
+.verdict{padding:13px 16px;border-radius:3px;font-weight:650;font-size:14.5px;margin:10px 0}
+.verdict.pass{background:var(--okbg);color:var(--ok)}.verdict.fail{background:var(--badbg);color:var(--bad)}
+.scen .story{color:#d6d3cd;font-size:13.5px;line-height:1.6}
+.scen .shows{font-size:12.5px;color:#a9c0ff;background:rgba(61,117,232,.08);border-radius:3px;padding:8px 11px;line-height:1.5;margin-top:8px}
+.polrow{display:grid;grid-template-columns:230px 130px 1fr;gap:14px;align-items:start;padding:11px 0;border-bottom:1px solid #333334}
+.polrow label{font-weight:600;font-size:13.5px}.polrow .why{color:var(--mut);font-size:12.5px;line-height:1.55}
+.footer-note{color:var(--mut);font-size:12px;margin-top:22px;line-height:1.6}
+#approvals-panel{scroll-margin-top:128px}
+#approvals-panel.flash{animation:apprflash 2.4s ease}
+@keyframes fdraw{to{stroke-dashoffset:0}}
+@keyframes fband{from{opacity:0}to{opacity:.22}}
+@keyframes fdot{to{opacity:1}}
+@media (prefers-reduced-motion:no-preference){.fdraw{stroke-dasharray:1;stroke-dashoffset:1;animation:fdraw 1.3s .15s ease forwards}.fband{opacity:0;animation:fband .9s .55s ease forwards}.fdot{opacity:0;animation:fdot .4s ease forwards}}
+@keyframes apprflash{0%,100%{box-shadow:none}18%,55%{box-shadow:0 0 0 2px var(--blue),0 0 28px rgba(61,117,232,.35)}}
+table,.v,.chip,#live-log,.botbar,.num,.lane .who small{font-variant-numeric:tabular-nums}
+:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:2px}
+table tr{transition:background .15s}
+table tbody tr:hover,table tr:hover{background:rgba(255,255,255,.025)}
+.btn{transition:background .18s,border-color .18s,transform .1s}
+.btn:active{transform:translateY(1px)}
+.bar1{background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:28px 28px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ok);display:inline-block;margin-right:7px;animation:pulse 2.2s infinite;vertical-align:1px}
+.dot.bad{background:var(--bad)}
+/* Serro pass 3 - live-site teardown: 0-radius system (pills only for status chips),
+   primary hover deepens with no movement, vertical hairline texture. */
+.panel,.card,.how,.howbtn,.drop,.msg,.detail,.verdict,#toast,.cmdk-box,.ci,.pipe .step,.skl i,.guide,.scen,.chip,#cmdk-btn,.btn,.sugg button,textarea,input[type=text],input[type=number],select{border-radius:0}
+.btn:hover{background:#2b5cd7;border-color:#2b5cd7;transform:none}
+.btn:active{transform:none}
+.bar1{background-image:linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);background-size:76px 100%}
+.ptgrid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--line);margin-top:12px}
+.ptcell{padding:18px;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.ptcell:nth-child(2n){border-right:0}
+.ptcell:nth-child(3),.ptcell:nth-child(4){border-bottom:0}
+.ptcell .ptnum{font-family:var(--mono);font-size:22px;color:var(--mut2);letter-spacing:.02em}
+.ptcell .ptlab{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;color:var(--blue2);text-transform:uppercase;margin:5px 0 8px}
+.ptcell p{font-size:13.5px;line-height:1.65;color:#d6d3cd;margin:0}
+@media(max-width:900px){.ptgrid{grid-template-columns:1fr}.ptcell{border-right:0}.ptcell:nth-child(3){border-bottom:1px solid var(--line)}}
+.sendbtn{width:42px;height:42px;border-radius:50%!important;padding:0;font-size:16px;flex-shrink:0;line-height:1}
+
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,207,142,.45)}70%{box-shadow:0 0 0 6px rgba(62,207,142,0)}100%{box-shadow:0 0 0 0 rgba(62,207,142,0)}}
+.skl i{display:block;height:12px;border-radius:2px;margin:9px 0;background:linear-gradient(90deg,#232323 25%,#303030 50%,#232323 75%);background-size:200% 100%;animation:shim 1.15s infinite}
+.skl i:nth-child(2){width:82%}.skl i:nth-child(3){width:64%}
+@keyframes shim{to{background-position:-200% 0}}
+#cmdk-btn{font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--mut);background:var(--bg2);border:1px solid var(--line2);border-radius:3px;padding:4px 8px;cursor:pointer;margin-left:14px;vertical-align:middle}
+#cmdk-btn:hover{color:#fff;border-color:var(--blue)}
+#cmdk{position:fixed;inset:0;background:rgba(4,4,6,.62);backdrop-filter:blur(3px);z-index:300;display:none}
+#cmdk.open{display:block}
+.cmdk-box{max-width:580px;margin:11vh auto 0;background:#262626;border:1px solid #3a3a3c;border-radius:6px;box-shadow:0 28px 70px rgba(0,0,0,.65);overflow:hidden;animation:fadeUp .25s ease}
+.cmdk-box input{width:100%;background:#262626;border:0;border-bottom:1px solid var(--line);color:#fff;font:inherit;font-size:15px;padding:14px 16px;outline:none}
+#cmdk-list{max-height:330px;overflow:auto;padding:6px}
+.cg{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;color:var(--mut2);padding:9px 10px 4px;text-transform:uppercase}
+.ci{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:3px;cursor:pointer;font-size:13.5px;color:#d6d3cd}
+.ci .num{font-family:var(--mono);font-size:10.5px;color:var(--mut2)}
+.ci.sel{background:rgba(61,117,232,.15);color:#fff}
+.ci.sel .num{color:var(--blue2)}
+.ci .hint{margin-left:auto;font-size:11px;color:var(--mut2)}
+@media (prefers-reduced-motion:no-preference){
+.rvinit{opacity:0;transform:translateY(8px)}
+.rvinit.rvin{opacity:1;transform:none;transition:opacity .5s ease,transform .5s ease}
+}
+.lane{display:grid;grid-template-columns:170px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid #333334;align-items:start}
+.lane .who{font-size:13px}.lane .who b{color:#fff}.lane .who small{display:block;color:var(--mut);font-size:11.5px;margin-top:2px}
+.stages{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;padding:4px 9px;border:1px solid var(--line2);border-radius:2px;color:var(--mut2);transition:.25s}
+.chip.on{border-color:var(--blue);color:#fff;background:rgba(61,117,232,.16)}
+.chip.done{border-color:rgba(62,207,142,.5);color:var(--ok);background:rgba(62,207,142,.08)}
+.chip.bad{border-color:rgba(255,107,107,.5);color:var(--bad);background:rgba(255,107,107,.08)}
+.chip small{color:var(--mut);letter-spacing:0}
+#live-log{font-family:var(--mono);font-size:11.5px;line-height:1.75;color:#c0beb8;background:var(--bg2);border:1px solid var(--line);border-radius:3px;padding:12px 14px;max-height:300px;overflow:auto;white-space:pre-wrap}
+#live-log .t{color:var(--mut2)} #live-log .hl{color:var(--blue2)} #live-log .ok{color:var(--ok)} #live-log .bad{color:var(--bad)}
+.pipe{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:0 0 12px}
+.pipe .step{border:1px solid var(--line);border-radius:3px;padding:11px 12px;background:var(--bg2)}
+.pipe .step .st{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;color:var(--blue2);text-transform:uppercase}
+.pipe .step .en{font-size:11px;color:var(--mut2);font-family:var(--mono)}
+.pipe .step p{font-size:12px;line-height:1.5;color:#d6d3cd;margin:5px 0 0}
+@media(max-width:1000px){.pipe{grid-template-columns:1fr 1fr}.lane{grid-template-columns:1fr}}
+.botbar{border-top:1px solid var(--line);margin-top:34px;padding-top:14px;display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--mut2);text-transform:uppercase}
+/* ---------- info (spec) system ---------- */
+.specwrap{position:relative;display:inline-block}
+.specbtn{background:none;border:1.5px solid rgba(91,140,255,.55);color:var(--blue2);border-radius:50%;width:17px;height:17px;font-size:11.5px;line-height:1;padding:0;cursor:pointer;font-weight:700;margin-left:6px;vertical-align:middle;font-style:italic;font-family:Georgia,serif;display:inline-flex;align-items:center;justify-content:center;transition:.15s}
+.specbtn:hover{background:rgba(61,117,232,.18)}
+.speccard{display:none;position:absolute;top:24px;left:0;width:350px;z-index:60;background:#101014;color:#dcdce0;border:1px solid var(--line2);border-radius:3px;padding:15px 16px;box-shadow:0 24px 60px rgba(0,0,0,.6);text-align:left;animation:fadeUp .25s ease-out}
+.speccard.open{display:block}
+.speccard .t{display:block;font-weight:700;color:#fff;font-size:13.5px;border-bottom:1px solid var(--line);padding-bottom:7px;margin-bottom:8px;letter-spacing:-.01em}
+.speccard .lbl{display:block;margin-top:6px;color:var(--blue2);font-family:var(--mono);font-weight:500;font-size:10.5px;text-transform:uppercase;letter-spacing:.09em}
+.speccard p{margin:3px 0 9px;font-size:12.5px;line-height:1.55;color:#c0beb8;text-transform:none;letter-spacing:0}
+.speccard .fx{font-family:var(--mono);background:#08080a;border:1px solid var(--line);border-radius:3px;padding:8px 10px;color:#ffd479}
+/* ---------- ribbon: Serro hairline cell strip ---------- */
+.ribbon{display:flex;gap:0;background:var(--bg2);border:1px solid var(--line);border-radius:3px;padding:0;margin:16px 0;color:#dcdce0;flex-wrap:wrap;position:relative;z-index:5}
+.ribbon .cell{flex:1;min-width:150px;padding:14px 16px;border-left:1px solid var(--line)}
+.ribbon .cell:first-child{border-left:0}
+.ribbon .k{font-family:var(--mono);font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.09em}
+.ribbon .v{font-size:22px;font-weight:700;color:#fff;margin-top:4px;letter-spacing:-.02em}
+.ribbon .v small{font-size:12px;color:var(--mut);font-weight:500}
+/* ---------- component guides ---------- */
+.guide{background:var(--panel);border:1px solid var(--line);border-radius:3px;margin:16px 0;overflow:hidden}
+.guide .ghead{display:flex;align-items:center;gap:10px;padding:11px 16px;background:var(--bg2);cursor:pointer}
+.guide .ghead .tag{font-family:var(--mono);font-size:9.5px;font-weight:500;letter-spacing:.1em;background:var(--blue);color:#fff;padding:3px 8px;border-radius:2px}
+.guide .ghead b{font-size:13.5px}.guide .ghead span:last-child{margin-left:auto;color:var(--mut);font-size:12px}
+.guide .gbody{display:none;padding:6px 16px 14px}.guide.open .gbody{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;animation:fadeUp .3s ease-out}
+@media(max-width:1000px){.guide.open .gbody{grid-template-columns:1fr 1fr}}
+.guide .gcol .h{font-family:var(--mono);font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.09em;color:var(--blue2);margin:8px 0 4px}
+.guide .gcol p{font-size:12.5px;line-height:1.6;color:#c3c3c9;margin:0}
+</style></head>
+<body><header class="topbar"><i class="rain r1"></i><i class="rain r2"></i><i class="rain r3"></i><div class="bar1"><div class="brand"><div class="logomark"></div><div><h1>Auto<span>Cash</span></h1><div class="sub">AUTONOMOUS CASH APPLICATION AGENT</div></div></div><div class="bar1r"><span class="ck">BUILT BY</span><b>C. Harsha Vardhana Reddy</b><span class="cs">IIM Visakhapatnam | NIT Andhra Pradesh</span></div><button id="cmdk-btn" onclick="openCmdk()" title="Command palette (Ctrl or Cmd + K)">⌘K</button></div><nav class="navrow"><span class="grp">OPERATE</span><button data-s="dash" class="active"><span class="num">01</span>Dashboard</button><button data-s="cases"><span class="num">02</span>Use Cases</button><button data-s="upload"><span class="num">03</span>Upload Center</button><button data-s="run"><span class="num">04</span>Run Reconciliation</button><span class="grp">INSIGHT</span><button data-s="ledger"><span class="num">05</span>Ledger</button><button data-s="forecast"><span class="num">06</span>Forecast and Collections</button><button data-s="eval"><span class="num">07</span>Evaluations</button><button data-s="health"><span class="num">08</span>Agent Health</button><button data-s="method"><span class="num">09</span>Methodology</button><button data-s="arch"><span class="num">10</span>Architecture</button><span class="grp">ASSIST</span><button data-s="parse"><span class="num">11</span>Remittance Parser</button><button data-s="copilot"><span class="num">12</span>Copilot</button><button data-s="policy"><span class="num">13</span>Policy Studio</button><button data-s="product"><span class="num">14</span>Product Thinking</button></nav></header>
+<div class="layout">
+<main>
+
+<section id="dash" class="active">
+<div class="vhead"><div><div class="eyebrow">OPERATE — 01 / DASHBOARD</div><h2>Dashboard</h2><div class="purpose">What the agent posted on its own, what it would not guess, and what still needs a person. Every number here is counted from real runs stored in this workspace - nothing is typed in by hand.</div></div>
+<button class="howbtn" onclick="toggleHow('dash')">How this works</button></div>
+<div class="how" id="how-dash"><b>How a payment flows:</b> payments arrive by upload, by API, or from the demo button. The engine compares each one with the unpaid invoices. If it finds an exact match (nothing left unexplained) and its confidence passes the policy threshold, it <b>auto-posts</b> it. Anything less becomes a <b>proposed match</b> for a person to approve, or an <b>exception</b> with a suggested next step. The touchless rate counts these stored results, so it honestly falls when the data is bad.</div>
+<div class="ribbon" id="ribbon">
+<div class="cell"><div class="k">Straight-through rate <span data-info="stp"></span></div><div class="v" id="r-stp">-</div></div>
+<div class="cell"><div class="k">Unapplied cash in suspense <span data-info="susp"></span></div><div class="v" id="r-susp">-</div></div>
+<div class="cell"><div class="k">Avg solver latency <span data-info="lat"></span></div><div class="v" id="r-lat">-</div></div>
+<div class="cell"><div class="k">Invoices settled (last run) <span data-info="setl"></span></div><div class="v" id="r-settled">-</div></div>
+<div class="cell"><div class="k">Open exceptions (last run) <span data-info="exc"></span></div><div class="v" id="r-exc">-</div></div>
+</div>
+<div class="cards">
+<div class="card"><div class="k">Touchless rate (last run) <span class="specslot" data-spec="touch"></span></div><div class="v" id="k-touch">-</div><div class="n">Payments posted with no human touch, out of all payments in the run</div></div>
+<div class="card"><div class="k">MILP eval accuracy <span class="specslot" data-spec="acc"></span></div><div class="v" id="k-acc">-</div><div class="n" id="k-acc-n">Simple baseline shown for comparison, same cases</div></div>
+<div class="card"><div class="k">Open invoices <span class="specslot" data-spec="inv"></span></div><div class="v" id="k-inv">-</div><div class="n">Live from the ledger API</div></div>
+<div class="card"><div class="k">Agent mode <span class="specslot" data-spec="mode"></span></div><div class="v" id="k-ai" style="font-size:16.5px;padding-top:7px">-</div><div class="n">AI suggests; fixed rules decide. API keys never leave the server.</div></div>
+</div>
+<p><button class="btn" onclick="seedAndRun(this)">Seed demo workspace and run reconciliation</button>
+<button class="btn ghost" onclick="go('upload')">Upload your own files</button>
+<button class="btn ghost" onclick="go('cases')">Explore use cases</button>
+<button class="btn ghost" onclick="refreshDash()">Refresh</button></p>
+<div id="dash-out"></div>
+<div class="guide" onclick="this.classList.toggle('open')"><div class="ghead"><span class="tag">DASH</span><b>Component Guide - Executive dashboard</b><span>Expand guide</span></div><div class="gbody">
+<div class="gcol"><div class="h">What it is</div><p>The home screen: the headline results, a summary strip (the ribbon) worked out from the latest run, and the history of every run.</p></div>
+<div class="gcol"><div class="h">How it is calculated</div><p>Touchless rate = payments posted on their own, divided by all payments in the run (hard payments are counted, not hidden). Unapplied cash = the total of leftover amounts across the run's matches. Latency = the average solver time stored on each match.</p></div>
+<div class="gcol"><div class="h">What it means</div><p>If the unapplied-cash figure grows from run to run, money is arriving faster than the agent can explain it. That points to poor remittance data, not a weak solver.</p></div>
+<div class="gcol"><div class="h">What you can do</div><p>Run the demo, upload your own files in the Upload Center, or open any past run in the table to see its evidence.</p></div></div></div>
+<div class="panel"><h3>Run history <span data-info="runhist"></span></h3><div class="d">Every batch the agent has executed in this workspace. Select a run to inspect its matches and exceptions.</div><div id="runs-t"><small>No runs yet. Seed the workspace or upload payments to create the first run.</small></div></div>
+</section>
+
+<section id="upload">
+<div class="vhead"><div><div class="eyebrow">OPERATE — 03 / UPLOAD</div><h2>Upload Center</h2><div class="purpose">Add your own invoices and payments as CSV files. Column names are matched automatically. Rows that cannot be read are listed with the reason - never silently dropped. Payments are matched as soon as they arrive.</div></div>
+<button class="howbtn" onclick="toggleHow('upload')">How this works</button></div>
+<div class="how" id="how-upload"><b>Reading your file:</b> column names are matched to our fields using a list of known synonyms - for example <code>inv_no</code>, <code>bill_no</code> and <code>document_no</code> all mean <code>invoice_id</code>. The mapping used is shown to you after import. The file also gets a <b>fingerprint</b> (a hash of its column names) so the same layout is recognised next time. Rows that fail are returned in a quarantine list with the row number and the exact error. Payments are matched immediately, using the current policy, and references are pulled out of the remittance text automatically.</div>
+<div class="guide" onclick="this.classList.toggle('open')"><div class="ghead"><span class="tag">UPL</span><b>Component Guide - Upload Center</b><span>Expand guide</span></div><div class="gbody">
+<div class="gcol"><div class="h">What it is</div><p>Where real work enters: your invoice list and your bank payments, as CSV files, with automatic column matching and a list of any rows that failed.</p></div>
+<div class="gcol"><div class="h">How it is calculated</div><p>Column names are matched to our fields using a synonym list; the mapping used is shown to you. The file is fingerprinted (a hash of its column names) so the same layout is recognised next time. Payments are matched as soon as they are imported, using the current policy.</p></div>
+<div class="gcol"><div class="h">What it means</div><p>An import with no failed rows means your bank and ERP files already line up with our fields. Most first files do not - the quarantine list is exactly the list of what to fix.</p></div>
+<div class="gcol"><div class="h">What you can do</div><p>Drop a file, paste the CSV text, or start from the samples and templates. Fix failed rows in your source file and import again.</p></div></div></div>
+<div class="grid2">
+<div class="panel"><h3>1. Open invoices (AR ledger) <span data-info="upinv"></span></h3><div class="d">One row per open invoice, amounts in major units (e.g. 1250.00). New invoice IDs are added to the ledger.</div>
+<div class="drop" id="drop-inv"><div class="big">Drop invoices CSV here, or click to choose a file</div><div class="small">invoice id, customer, amount, PO number, discount %, age, days to due</div></div>
+<input type="file" id="file-inv" accept=".csv,text/csv" style="display:none">
+<p><button class="btn ghost small" onclick="fillSample('inv')">Load sample invoices</button>
+<button class="btn ghost small" onclick="downloadTemplate('inv')">Download template</button></p>
+<textarea class="csv" id="csv-inv" rows="7" placeholder="Paste invoice CSV here, or drop a file above..."></textarea>
+<p><button class="btn" onclick="importInvoices(this)">Import invoices</button></p><div id="up-inv-out"></div></div>
+<div class="panel"><h3>2. Payments (bank / lockbox) <span data-info="uppay"></span></h3><div class="d">One row per received payment. On import, every payment is reconciled against the open ledger as a batch run.</div>
+<div class="drop" id="drop-pay"><div class="big">Drop payments CSV here, or click to choose a file</div><div class="small">payment id, payer, amount, remittance text, optional deduction and reason</div></div>
+<input type="file" id="file-pay" accept=".csv,text/csv" style="display:none">
+<p><button class="btn ghost small" onclick="fillSample('pay')">Load sample payments</button>
+<button class="btn ghost small" onclick="downloadTemplate('pay')">Download template</button></p>
+<textarea class="csv" id="csv-pay" rows="7" placeholder="Paste payment CSV here, or drop a file above..."></textarea>
+<p><button class="btn" onclick="importPayments(this)">Import and reconcile payments</button></p><div id="up-pay-out"></div></div>
+</div>
+</section>
+
+<section id="run">
+<div class="vhead"><div><div class="eyebrow">OPERATE — 04 / RECONCILIATION</div><h2>Run Reconciliation</h2><div class="purpose">The engine matches each payment to invoices. Open any match to see the full evidence for that decision.</div></div>
+<button class="howbtn" onclick="toggleHow('run')">How this works</button></div>
+<div class="how" id="how-run"><b>Step 1 - narrow the list:</b> for each payment, the engine first narrows the unpaid invoices using the evidence it has, in this order: invoice references in the remittance, then the purchase order, then a known payer alias, then that payer's own invoices. The solver never searches the whole ledger. <b>Step 2 - solve:</b> the MILP solver picks the set of invoices whose total, after discounts and any accepted deduction, equals the payment exactly (the cash conservation equation). Among exact sets it prefers older invoices, and it treats any unexplained leftover (residual) as very costly - a penalty of 1,000,000 - so it would rather propose nothing than hide a difference. Open any match to see its invoices and a <b>why-not check</b> for an invoice it did not pick. An invoice used by one payment cannot be used again in the same batch, and sending the same batch twice replays the first result instead of posting twice.</div>
+<p><button class="btn" onclick="seedAndRun(this)">Seed workspace and run batch</button>
+<button class="btn ghost" onclick="go('upload')">Run from uploaded files instead</button></p>
+<div class="panel"><h3>Live run - watch the engine work <span data-info="live"></span></h3>
+<div class="d">The batch engine, streamed as it computes: each payment's lane lights up as it is narrowed, solved, judged and decided. Nothing here is an animation - every line is an event the engine emitted while running, and the run is stored like any other. On this 8-payment demo the whole run takes under a second; on a 5,000-payment bank file, each lane lights up as its payment is processed.</div>
+<p><button class="btn" id="live-btn" onclick="runLive(this)">Run the demo batch live</button></p>
+<div id="live-out"></div></div>
+<div id="run-summary"></div>
+<div class="grid2"><div class="panel"><h3>Matches <span data-info="matches"></span></h3><div id="matches"><small>Nothing run yet in this view.</small></div></div>
+<div class="panel"><h3>Exceptions <span data-info="expanel"></span></h3><div id="exceptions"><small>Exceptions from the run appear here, each with a recommended action.</small></div></div></div>
+<div id="match-detail"></div>
+<div class="panel" id="approvals-panel"><h3>Approvals waiting <span data-info="appr"></span> <span class="pill warn" id="appr-count" style="display:none"></span></h3>
+<div class="d">Matches the agent solved but would not post alone - because policy held them (for example the maker-checker threshold) or a person must sign. Approving posts the match; rejecting returns it to the exception queue. Every decision is written to the audit trail.</div>
+<div id="appr-out"><div class="skl"><i></i><i></i><i></i></div></div></div>
+<div class="guide" onclick="this.classList.toggle('open')"><div class="ghead"><span class="tag">RUN</span><b>Component Guide - Batch reconciliation</b><span>Expand guide</span></div><div class="gbody">
+<div class="gcol"><div class="h">What it is</div><p>One full pass of the real engine over a set of payments: narrow the candidates, solve the matches, judge deductions, and raise exceptions for the rest.</p></div>
+<div class="gcol"><div class="h">How it is calculated</div><p>For each payment: the candidate list narrows by reference, then PO, then payer name. The solver then finds the invoice set that equals the payment exactly, preferring older invoices. The confidence rule and the auto-post rule are on the Methodology page, and every match shows its own worked calculation (its derivation).</p></div>
+<div class="gcol"><div class="h">What it means</div><p>AUTO_POSTED rows are finished work. PROPOSED rows are the agent asking a person to approve. Exceptions are the agent refusing to guess - each one says what to do next.</p></div>
+<div class="gcol"><div class="h">What you can do</div><p>Open any match to read its worked calculation and to test why another invoice was not picked. To change behaviour, edit the rules in Policy Studio and run again.</p></div></div></div>
+</section>
+
+<section id="cases">
+<div class="vhead"><div><div class="eyebrow">OPERATE — 02 / USE CASES</div><h2>Use Cases</h2><div class="purpose">Ten hard, real-world cases. Each one states the correct answer up front, runs on a fresh ledger, and is graded against that answer. The verdict is computed - it cannot be faked.</div></div>
+<button class="howbtn" onclick="toggleHow('cases')">How this works</button></div>
+<div class="how" id="how-cases">Each pack states its expected answer up front: the match status, whether it may post on its own, exactly which invoices must be chosen, the leftover amount to the cent, and any deduction decision with its ERP reason code. The pack then runs through the <b>same engine used for real payments</b> - narrowing, solver, deduction checks, duplicate defence - on a separate temporary ledger, and the result is compared field by field. Green means every single check passed.</div>
+<div class="panel"><h3>Custom Case Builder <span data-info="builder"></span></h3><div class="d">Build your own test: enter invoices and one payment, and the production engine runs them in a clean room. Every result carries its full derivation - bring the case you think breaks it.</div>
+<div id="cb-invs"></div>
+<p><button class="btn ghost small" onclick="cbAddRow()">Add invoice row</button></p>
+<div class="grid2">
+<div><label><small>Payer</small></label><input type="text" id="cb-payer" value="Apex Manufacturing">
+<label><small>Payment amount ($)</small></label><input type="number" id="cb-amount" value="500">
+<label><small>References (comma separated, e.g. PO-2)</small></label><input type="text" id="cb-refs" value=""></div>
+<div><label><small>Claimed deduction ($)</small></label><input type="number" id="cb-ded" value="0">
+<label><small>Deduction reason</small></label><input type="text" id="cb-reason" value="">
+<label style="display:flex;gap:8px;align-items:center;margin-top:12px"><input type="checkbox" id="cb-pod" style="width:auto"> Proof of delivery verified clean</label></div>
+</div>
+<p><button class="btn" onclick="cbRun(this)">Run my case</button></p><div id="cb-out"></div></div>
+<div class="grid2" id="case-grid"><small>Loading use cases...</small></div>
+<div id="case-out"></div>
+</section>
+
+<section id="ledger">
+<div class="vhead"><div><div class="eyebrow">INSIGHT — 05 / LEDGER</div><h2>Open Ledger</h2><div class="purpose">All unpaid invoices the agent can match payments against, with their age and discount terms.</div></div>
+<button class="howbtn" onclick="toggleHow('ledger')">How this works</button></div>
+<div class="how" id="how-ledger">Invoices arrive through the Upload Center or the demo seed. When a batch uses an invoice, it leaves this list, so it cannot be spent twice. Age matters: the solver prefers settling older invoices first. The discount rate matters: it is the early-payment discount the solver may apply.</div>
+<div class="cards" style="grid-template-columns:repeat(3,1fr)">
+<div class="card"><div class="k">Open invoices <span data-info="inv"></span></div><div class="v" id="l-count">-</div><div class="n">Across all customers</div></div>
+<div class="card"><div class="k">Open value <span data-info="openval"></span></div><div class="v" id="l-total">-</div><div class="n">Gross receivables awaiting cash</div></div>
+<div class="card"><div class="k">Overdue value <span data-info="overval"></span></div><div class="v" id="l-over">-</div><div class="n">Due date already passed</div></div>
+</div>
+<div class="panel"><div id="ledger-t"><small>Loading ledger...</small></div></div>
+</section>
+
+<section id="forecast">
+<div class="vhead"><div><div class="eyebrow">INSIGHT — 06 / FORECAST</div><h2>Forecast and Collections</h2><div class="purpose">When unpaid invoices are likely to turn into cash, and which customers to chase first. Both come from the trained payment-delay model; its accuracy is shown on the Agent Health page.</div></div>
+<button class="howbtn" onclick="toggleHow('forecast')">How this works</button></div>
+<div class="how" id="how-forecast">For each unpaid invoice, the model predicts how many days the customer will take to pay, based on that customer's past behaviour, the amount, and the time of year. Sampling many possible payment dates around those predictions gives the weekly <b>P10 / P50 / P90 range</b> - a range a treasurer can plan against, instead of one made-up number. The collections queue scores each invoice by money at risk: amount, days overdue, and predicted delay combined.</div>
+<div class="grid2">
+<div class="panel"><h3>30-day cash-in bands <span data-info="bands"></span></h3><div id="fc"><small>Loading forecast...</small></div></div>
+<div class="panel"><h3>Collections priority queue <span data-info="collq"></span></h3><div id="col"><small>Loading...</small></div></div>
+</div>
+</section>
+
+<section id="eval">
+<div class="vhead"><div><div class="eyebrow">INSIGHT — 07 / EVALUATIONS</div><h2>Evaluations</h2><div class="purpose">The solver graded against a simple baseline, on cases where the correct answer is known. Recomputed live every time this page loads.</div></div>
+<button class="howbtn" onclick="toggleHow('eval')">How this works</button></div>
+<div class="how" id="how-eval">Each test case has a correct answer marked by a human: the invoices the payment truly settles. Both solvers get the same shortlist a real payment would get. <b>Accuracy</b> counts how often the solver's choice equals the marked answer; the <b>exact rate</b> counts answers that leave $0.00 unexplained. The greedy baseline is fast and sounds reasonable, but it fails when the right choice depends on age and deductions together - that is why real payments use the MILP solver.</div>
+<div id="eval-out"><small>Loading evaluations...</small></div>
+</section>
+
+<section id="health">
+<div class="vhead"><div><div class="eyebrow">INSIGHT — 08 / HEALTH</div><h2>Agent Health</h2><div class="purpose">Is this deployment healthy, and how good are its models on data they never saw in training? This is the page an engineer or a diligence reviewer asks for.</div></div>
+<button class="howbtn" onclick="toggleHow('health')">How this works</button></div>
+<div class="how" id="how-health">The models are trained on synthetic history that contains a real, learnable pattern. They are then graded on later data they never saw (a time-ordered holdout): the delay model's average error against a naive baseline, and the validity model's AUC. What data the models were trained on is printed next to the scores. When real payment history is connected, the same tests retrain and re-grade them. The readiness checks confirm the database, data folder and models are working before the service takes traffic.</div>
+<div id="health-out"><div class="skl"><i></i><i></i><i></i></div></div>
+<div class="panel"><h3>Audit trail <span data-info="audit"></span></h3>
+<div class="d">Every consequential action in this workspace, in order: runs completed, matches approved or rejected, policy changes. Written by the server at the moment the action happens - it cannot be edited from this interface.</div>
+<div id="audit-out"><div class="skl"><i></i><i></i><i></i></div></div></div>
+</section>
+
+<section id="parse">
+<div class="vhead"><div><div class="eyebrow">ASSIST — 11 / PARSER</div><h2>Remittance Parser</h2><div class="purpose">Paste a messy remittance email. The parser turns it into clean payment data and checks every reference in it against the ledger.</div></div>
+<button class="howbtn" onclick="toggleHow('parse')">How this works</button></div>
+<div class="how" id="how-parse">The parser reads the email and pulls out the amount, the invoice and PO references, and any claimed deduction. It uses Gemini when a server key is set, and fixed rules otherwise - the mode is always labelled on the result. Then a <b>verifier</b> checks every reference against the unpaid invoices: anything the parser invented is flagged, never trusted. Suggest first, verify second - that is the difference between an AI demo and a system you can post cash with.</div>
+<textarea id="parse-in" rows="6">Hi team, remittance from Apex Manufacturing Inc. Wire of $200.00 against INV-1001 and INV 1002. Less deduction $50.00 for shortage on delivery. PO-11 referenced.</textarea>
+<div class="panel"><h3>AI extraction layer <span data-info="ailayer"></span></h3>
+<div class="d" id="ai-strip">Checking which extraction engine is active...</div></div>
+<p><button class="btn" onclick="doParse(this)">Parse and verify</button></p><div id="parse-out"></div>
+</section>
+
+<section id="copilot">
+<div class="vhead"><div><div class="eyebrow">ASSIST — 12 / COPILOT</div><h2>Copilot <span data-info="copilot"></span></h2><div class="purpose">Ask questions about this workspace. Answers come only from the product's own records, each with its source shown - or the copilot says it does not know.</div></div>
+<button class="howbtn" onclick="toggleHow('copilot')">How this works</button></div>
+<div class="how" id="how-copilot">The copilot answers only from this product's own records - runs, matches, exceptions, evaluations. It is not free to make things up: every answer shows its sources, questions outside the records are refused, and anything it suggests doing needs a person's confirmation first. Ask why a payment was not matched, and it walks through the same evidence an analyst would check.</div>
+<div class="d" style="color:var(--mut);font-size:12.5px;margin-top:12px">Suggested questions <span data-info="copsugg"></span> - grounded in this workspace's records:</div>
+<div class="sugg">
+<button onclick="askQ('What is the touchless rate?')">What is the touchless rate?</button>
+<button onclick="askQ('Show exceptions')">Show exceptions</button>
+<button onclick="askQ('Why was P6 not matched?')">Why was P6 not matched?</button>
+<button onclick="askQ('Which solver is more accurate?')">Which solver is more accurate?</button>
+</div>
+<div class="chatlog" id="chat"></div>
+<p style="display:flex;gap:10px"><input type="text" id="chat-in" placeholder="Ask about runs, matches, exceptions, accuracy..." onkeydown="if(event.key==='Enter')ask()">
+<button class="btn sendbtn" onclick="ask()" title="Ask" aria-label="Ask">&#8593;</button></p>
+</section>
+
+<section id="policy">
+<div class="vhead"><div><div class="eyebrow">ASSIST — 13 / POLICY</div><h2>Policy Studio</h2><div class="purpose">The rules that control the agent: what it may post alone, what it disputes, and what a person must approve. Change a number here and the next run follows it.</div></div>
+<button class="howbtn" onclick="toggleHow('policy')">How this works</button></div>
+<div class="how" id="how-policy">Each tenant (customer company) has its own policy, and the engine loads it fresh on every run - so saving a change here changes what the next run does. The defaults are cautious: an unexplained leftover is the worst outcome, small differences are written off instead of disputed, and anything above the maker-checker limit needs a second person even when the solver is sure.</div>
+<div class="panel"><div id="policy-form"><small>Loading policy...</small></div>
+<p><button class="btn" onclick="savePolicy(this)">Save policy</button> <small id="policy-src"></small></p></div>
+</section>
+
+<section id="method">
+<div class="vhead"><div><div class="eyebrow">INSIGHT — 09 / METHODOLOGY</div><h2>Methodology - how every number is computed</h2><div class="purpose">Every formula behind every number in this product, in one place. The API serves this page from the same code that does the calculations. Open any match to see the same formulas with that run's real values filled in.</div></div></div>
+<div id="method-out"><small>Loading methodology...</small></div>
+</section>
+
+<section id="arch">
+<div class="vhead"><div><div class="eyebrow">INSIGHT — 10 / ARCHITECTURE</div><h2>Architecture</h2><div class="purpose">How the product is built, layer by layer. Each layer names the real technology used in this deployment.</div></div>
+<button class="howbtn" onclick="toggleHow('arch')">How this works</button></div>
+<div class="how" id="how-arch"><b>Reading this page:</b> the flow is the request path of a single payment, top to bottom. The component table names the module responsible for each stage in the shipped codebase - nothing here is aspirational; the roadmap items are labelled as roadmap on the Product Thinking page, not drawn as if they exist.</div>
+<div class="panel"><h3>Request path of one payment <span data-info="reqpath"></span></h3>
+<table><tr><th style="width:60px">Step <span data-info="step"></span></th><th style="width:260px">Stage <span data-info="stage"></span></th><th>What happens <span data-info="whathappens"></span></th></tr>
+<tr><td>1</td><td>Ingestion + transform</td><td>CSV or API payload is normalised to the canonical schema: synonym header mapping, source fingerprinting, row quarantine with reasons. Remittance text goes to the parser (Gemini when configured, deterministic otherwise) and every extracted reference is verified against the open ledger.</td></tr>
+<tr><td>2</td><td>Candidate resolution</td><td>The ledger narrows in order: explicit references, purchase order, payer alias, subsidiary. Duplicates are fingerprinted and stopped before matching.</td></tr>
+<tr><td>3</td><td>MILP solver (HiGHS via scipy)</td><td>Subset selection under the cash conservation equality with the age-weighted, penalty-priced objective from the Methodology page. A Rust subset-sum kernel mirrors the combinatorics and is equivalence-tested against the Python path on 203 shared cases.</td></tr>
+<tr><td>4</td><td>Deduction intelligence</td><td>Claims are classified to the ERP reason taxonomy, z-scored against history, and decided by the expected-value dispute rule.</td></tr>
+<tr><td>5</td><td>Posting + exceptions</td><td>Exact, confident matches auto-post (simulated posting in this build, labelled as such); everything else becomes a proposed match or a tracked exception with counterfactuals. All of it lands in the audit log with the run's policy snapshot.</td></tr>
+<tr><td>6</td><td>Insight layer</td><td>Delay and validity models (scikit-learn, time-ordered holdout) feed the forecast bands and the collections queue; the copilot answers only from these stored records, with citations.</td></tr>
+</table></div>
+<div class="grid2">
+<div class="panel"><h3>Platform components <span data-info="platcomp"></span></h3><table>
+<tr><th>Component <span data-info="comp"></span></th><th>Technology <span data-info="tech"></span></th></tr>
+<tr><td>API + product UI</td><td>FastAPI (Python 3.12), single-file web UI, OpenAPI at /docs</td></tr>
+<tr><td>Solvers</td><td>scipy.optimize.milp (HiGHS) + Rust kernel (optional, equivalence-tested)</td></tr>
+<tr><td>Data</td><td>SQLite (WAL), database-per-tenant isolation; Postgres-compatible schema discipline</td></tr>
+<tr><td>Tenancy + security</td><td>Hashed API keys (shown once), RBAC viewer / analyst / approver / admin, per-key rate limiting</td></tr>
+<tr><td>Observability</td><td>Request IDs, structured JSON logs, Prometheus /metrics, /health and /ready gates</td></tr>
+<tr><td>Packaging</td><td>Multi-stage Docker (Rust stage + slim runtime), non-root, $PORT-aware; deploys to Cloud Run or ECS</td></tr>
+</table></div>
+<div class="panel"><h3>Design rules that hold the system together <span data-info="designrules"></span></h3>
+<p style="font-size:13.5px;line-height:1.7"><b>1. AI proposes, math decides.</b> No LLM output can post cash; it can only propose fields that deterministic components verify.<br>
+<b>2. Money is integer cents.</b> No floats anywhere near a posting; residuals are exact, never rounding artefacts.<br>
+<b>3. Every decision carries its derivation.</b> If a number cannot be recomputed from records the product shows, it is not shown.<br>
+<b>4. Exceptions are a workflow, not a failure.</b> The tail is where analysts earn their keep, so it is designed first-class: counterfactuals, recommended actions, audit trail.<br>
+<b>5. Policy is configuration.</b> Thresholds that change behaviour live in tenant policy, versioned with each run - never buried in code.</p></div>
+</div>
+</section>
+
+<section id="product">
+<div class="vhead"><div><div class="eyebrow">ASSIST — 14 / PRODUCT</div><h2>Product Thinking</h2><div class="purpose">Why AutoCash is built the way it is - the problem, the design rules, and where it goes next.</div></div></div>
+<div class="panel" style="max-width:860px">
+<h3>Product thesis <span data-info="prodthesis"></span></h3>
+<div class="ptgrid">
+<div class="ptcell"><div class="ptnum">01/</div><div class="ptlab">The problem</div><p>Cash application is a conservation problem with an information problem on top: every cent received must land somewhere auditable, but the evidence arrives as messy remittance text, short pays and silent deductions. Incumbent platforms advertise 85 to 99 percent auto-match, yet implementations run for months and the exception tail still eats the analyst day. The tail is the product opportunity.</p></div>
+<div class="ptcell"><div class="ptnum">02/</div><div class="ptlab">The design rule</div><p>AI proposes, math decides. Probabilistic components (LLM parsing, ML delay and validity models) extract and score; deterministic components (the MILP solver under a cash conservation equation, the policy engine, the expected-value dispute rule) make every posting decision. Anything unreconciled becomes a tracked exception with counterfactuals - never a silent write-off.</p></div>
+<div class="ptcell"><div class="ptnum">03/</div><div class="ptlab">The wedge</div><p>A pilot called <i>the replay</i>: send us your last 90 days of payments and open invoices as CSV. AutoCash replays them and shows, cent by cent, what would have auto-posted, what would have been disputed, and what your team touched that it should not have had to. Proof before platform.</p></div>
+<div class="ptcell"><div class="ptnum">04/</div><div class="ptlab">North-star metric</div><p>Touchless cash rate at $0 residual. Supporting: match accuracy on labelled evaluations, residual dollars, exception ageing, dispute recovery value, solver latency.</p></div>
+</div>
+<p><b>Roadmap, honestly labelled.</b> Live ERP write-back (SAP, Oracle, NetSuite), bank-file ingestion (BAI2, MT940, lockbox formats), persistent multi-tenant storage, and SOC 2 are the known table-stakes gaps for enterprise sale. This build covers the decision core those integrations feed: matching, deductions, forecast, collections, evaluation and audit.</p>
+<p><b>Honesty labels.</b> All data in this workspace is synthetic and labelled as such. Market figures quoted anywhere in this product are vendor claims used as context, never this product's results. Win probabilities in deduction intelligence are transparent heuristics, and the UI says so where they appear.</p>
+</div>
+<div class="footer-note">AutoCash is an independent product built by C. Harsha Vardhana Reddy. It is not affiliated with any ERP or receivables vendor.</div>
+</section>
+<div class="botbar"><span><i class="dot" id="sb-dot"></i><span id="sb-svc">SERVICE -</span></span><span>·</span><span id="sb-ai">AI -</span><span>·</span><span id="sb-auth">AUTH -</span><span style="margin-left:auto">AutoCash · Independent product · Synthetic data only · AI proposes, math decides</span></div></main></div>
+<div id="cmdk"><div class="cmdk-box"><input id="cmdk-in" type="text" placeholder="Jump to a view, or run an action..." autocomplete="off"><div id="cmdk-list"></div><div style="padding:8px 14px;border-top:1px solid var(--line);font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--mut2)">↑↓ NAVIGATE · ENTER SELECT · ESC CLOSE</div></div></div>
+<div id="toast"></div>
+<script>
+const $=id=>document.getElementById(id);
+const money=c=>"$"+(c/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function api(path,opts={}){const r=await fetch(path,{headers:{"Content-Type":"application/json"},...opts});if(!r.ok){throw new Error((await r.text()).slice(0,300))}return r.json()}
+function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),3400)}
+function go(s){document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.s===s));document.querySelectorAll("main section").forEach(x=>x.classList.toggle("active",x.id===s));const ab=document.querySelector(".navrow button.active");if(ab)ab.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"});if(LOADERS[s]){const p=LOADERS[s]();if(p&&p.then)p.then(()=>{fillInfo();initReveal()});else{fillInfo();initReveal()}}}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>go(b.dataset.s));
+document.addEventListener("click",()=>setTimeout(()=>{fillInfo();initReveal()},60));
+function toggleHow(s){$("how-"+s).classList.toggle("open")}
+function pill(txt,kind){return `<span class="pill ${kind}">${esc(txt)}</span>`}
+function statusPill(st){return st==="OPTIMAL_EXACT_MATCH"?pill(st,"ok"):st==="PARTIAL_MATCH"?pill(st,"warn"):pill(st,"bad")}
+let lastRun=null,seedPayments=null,lastMatches=null;
+
+/* ---------- Dashboard + runs ---------- */
+async function refreshDash(){
+  try{
+    const h=await api("/health");
+    $("k-ai").textContent=h.gemini_configured?"Gemini live":"Deterministic mode";
+    const inv=await api("/api/v1/invoices"); $("k-inv").textContent=inv.length;
+    const ev=await api("/api/v1/evaluations");
+    $("k-acc").textContent=(ev.milp_accuracy*100).toFixed(0)+"%";
+    $("k-acc-n").textContent="Greedy baseline: "+(ev.greedy_accuracy*100).toFixed(0)+"% on the same cases";
+    fillInfo();
+    const runs=await api("/api/v1/runs");
+    if(runs.length){
+      const m=await api(`/api/v1/runs/${runs[0].run_id}/matches`);
+      const susp=m.reduce((a,x)=>a+Math.abs(x.residual_cents),0);
+      const lats=m.map(x=>(x.result||{}).latency_ms||0).filter(Boolean);
+      $("r-stp").innerHTML=(runs[0].payments?((runs[0].auto_posted/runs[0].payments*100).toFixed(1)+"%"):"-");
+      $("r-susp").innerHTML=money(susp);
+      $("r-lat").innerHTML=lats.length?(lats.reduce((a,b)=>a+b,0)/lats.length).toFixed(1)+" <small>ms</small>":"-";
+      $("r-settled").innerHTML=m.reduce((a,x)=>a+((x.result||{}).lines||[]).length,0);
+      $("r-exc").innerHTML=runs[0].exceptions;
+    }
+    if(runs.length){const t=runs[0].payments?runs[0].auto_posted/runs[0].payments:0;$("k-touch").textContent=(t*100).toFixed(1)+"%"}
+    $("runs-t").innerHTML=runs.length?`<table><tr><th>Run <span data-info="runid"></span></th><th>When (UTC) <span data-info="when"></span></th><th>Status <span data-info="runstatus"></span></th><th>Matches <span data-info="matchesn"></span></th><th>Auto-posted <span data-info="autopn"></span></th><th>Exceptions <span data-info="excn"></span></th></tr>${runs.map(r=>`<tr class="clickable" onclick="openRun('${r.run_id}')"><td><small>${esc(r.run_id)}</small></td><td><small>${esc((r.created_at||"").replace("T"," ").slice(0,19))}</small></td><td>${pill(r.status,"ok")}</td><td>${r.matches}</td><td>${r.auto_posted}</td><td>${r.exceptions}</td></tr>`).join("")}</table>`:"<small>No runs yet. Seed the workspace or upload payments to create the first run.</small>";
+  }catch(e){toast("Could not load dashboard: "+e.message)}
+}
+async function openRun(runId){
+  go("run");
+  const [m,x]=await Promise.all([api(`/api/v1/runs/${runId}/matches`),api(`/api/v1/runs/${runId}/exceptions`)]);
+  renderStoredRun(runId,m,x);
+  scheduleApprovalsJump(1200);
+}
+function renderStoredRun(runId,matches,exceptions){
+  lastMatches=matches;
+  $("run-summary").innerHTML=`<div class="msg">Run <b>${esc(runId)}</b> - ${matches.length} matches, ${exceptions.length} exceptions. Select a match for its evidence.</div>`;
+  $("matches").innerHTML=matches.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Decision <span data-info="decision"></span></th><th>Solver <span data-info="solver"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${matches.map((m,i)=>`<tr class="clickable" onclick="storedDetail(${i})"><td>${esc(m.payment_id)}</td><td>${pill(m.status,m.status==="AUTO_POSTED"?"ok":"warn")}</td><td>${esc(m.solver)}</td><td>${money(m.residual_cents)}</td><td>${Number(m.confidence).toFixed(2)}</td></tr>`).join("")}</table>`:"<small>No matches stored for this run.</small>";
+  $("exceptions").innerHTML=exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th></tr>${exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  $("match-detail").innerHTML="";
+}
+let specSeq=0;
+function spec(title,what,formula,impact){
+  const id="spec"+(++specSeq);
+  return `<span class="specwrap"><button class="specbtn" title="How this is computed" onclick="toggleSpec('${id}',event)">i</button><span class="speccard" id="${id}"><span class="t">${esc(title)}</span><span class="lbl">What it is</span><p>${esc(what)}</p><span class="lbl">Mathematical formulation</span><p class="fx">${esc(formula)}</p><span class="lbl">Operational impact</span><p>${esc(impact)}</p></span></span>`;
+}
+function toggleSpec(id,ev){ev.stopPropagation();document.querySelectorAll(".speccard").forEach(c=>{if(c.id!==id)c.classList.remove("open")});document.getElementById(id).classList.toggle("open")}
+document.addEventListener("click",()=>document.querySelectorAll(".speccard").forEach(c=>c.classList.remove("open")));
+
+const SPECS={
+  touch:["Touchless (straight-through) rate","Out of all payments in the run, the share the agent posted completely on its own.","auto_posted / total payments in run; duplicates and no-matches count in the denominator","This is the number a finance head watches: each point is analyst work saved. It drops when the data is bad - by design, the agent asks instead of guessing."],
+  acc:["MILP evaluation accuracy","How often the optimiser picks exactly the invoices a human expert marked as correct, on test cases with known answers.","correct sets / labelled cases; exact rate = $0-residual solutions / cases","Shows whether the real solver beats the simple baseline on the cases where the choice is hard: several invoices, discounts and deductions combined."],
+  inv:["Open invoices","Invoices that are still unpaid. These are the only invoices a new payment can be matched against.","live count from the ledger API; matched invoices are consumed by batch runs","If this count keeps growing, payments are arriving but not being matched - or customers are not paying."],
+  mode:["Agent mode","Which mode is running. Deterministic mode uses no AI model at all. Gemini mode adds AI reading of remittance text, with every result checked.","parser source is labelled on every parse result; references are verified against the open ledger either way","If the AI is unavailable, the product says so openly and falls back to fixed rules. References are checked against the ledger in both modes."]};
+const INFO={
+  stp:["Straight-through rate","Payments auto-posted with zero human touch, as a share of all payments in the latest stored run.","auto_posted / total payments (duplicates and no-matches stay in the denominator)","The executive automation number - honest because hard payments cannot be excluded from it."],
+  susp:["Unapplied cash in suspense","Money from the latest run that the agent could not fully explain - the total of all leftover amounts (residuals) across its matches.","SUM |residual_cents| over the run's stored matches","Money that arrived but is not yet applied to any invoice blocks the month-end close and confuses customers. This is usually the first figure a CFO asks for."],
+  lat:["Average solver latency","How long the solver took per payment in the latest run, on average. The time is stored on each match when it is made.","mean(latency_ms) over matches","A batch can hold thousands of payments, so each one must solve in milliseconds. Narrowing the candidate list first is what keeps it fast."],
+  setl:["Invoices settled","How many invoices were cleared by the latest run, added up across all its matches.","SUM of matched lines over the run's matches","This counts cleared work. One payment can settle several invoices at once."],
+  exc:["Open exceptions","Payments in the latest run that the agent would not post on its own. Each one has a type, a severity, and a suggested next step.","count of exception records on the run","Exceptions are not errors. They are the analyst's work queue, already sorted and explained."],
+  openval:["Open value","Total money still owed across all unpaid invoices.","SUM gross_cents over open invoices","This is the full amount the matching engine and the collections team are working against."],
+  overval:["Overdue value","Money owed on invoices whose due date has already passed.","SUM gross_cents where due_in_days < 0","This is where late payment risk sits - and where chasing helps most."],
+  upinv:["Invoice import","Invoices are added to the ledger from a CSV file. Column names are matched automatically; rows that fail are listed separately with the reason.","synonym map over normalised headers; source fingerprinted by SHA-256 of the header set","The exact column mapping used is shown after every import, so nothing is interpreted in secret."],
+  uppay:["Payment import and reconcile","Payments are read and matched straight away, as one batch run, using the current policy rules.","references extracted from remittance text by pattern; then the standard batch pipeline","One click takes a payment from bank file to posted, or to an explained exception. There is no waiting area in between."],
+  builder:["Custom Case Builder","Invoices and a payment that you type in, run through the real engine on a separate, temporary ledger. Your workspace data is not touched.","identical pipeline to a batch run: resolution, MILP, deduction judgement, derivation","The quickest way to test the engine: bring the case you think will break it."],
+  bands:["Cash-in bands","For each of the next weeks: a cautious figure (P10), the expected figure (P50), and an optimistic figure (P90) for cash coming in. Built from the delay model's prediction for each invoice.","payment timings sampled around predicted dates; weekly totals percentiled","A range is honest; a single exact date would be made up. Planners work with the cautious figure and treat the rest as upside."],
+  collq:["Collections priority","Unpaid invoices sorted so the most urgent one is first.","score = amount x (1 + overdue/30) x (1 + max(predicted delay,0)/20)","The order is a money argument: the biggest, latest, slowest-paying invoices get chased first."],
+  resid:["Residual","The part of the payment that the chosen invoices do not explain, exact to the cent.","residual = payment - (net applied - deduction accepted)","A leftover amount is never quietly hidden. At $0 the match can post on its own; anything else becomes an exception for a person."],
+  conf:["Confidence","A score for the match, worked out by a fixed rule. You can recompute it by hand from the derivation shown on the match.","1.0 if residual = 0, else max(0.3, 1 - |residual| / payment)","A match posts on its own only if it is exact and its confidence meets the policy threshold (0.90)."],
+  decision:["Decision","AUTO_POSTED: the engine posted it with no human involved. PROPOSED: the engine is asking a person to approve it first.","status = OPTIMAL_EXACT_MATCH and confidence >= automation threshold","Policy draws this line, and it is the same line every time."],
+  excact:["Recommended action","The next step the agent suggests for this exception, based on what kind of problem it is.","duplicate: hold and verify; residual: review counterfactuals; no-match: analyst investigation","Every exception arrives with its next step already worked out."],
+  verdict:["Use-case verdict","The answer the scenario promised, compared field by field with what the engine actually did on a fresh ledger.","pass iff status, auto-post flag, invoice set, residual and deduction decision all equal the stated expectation","Green is earned by the run itself - it cannot be typed in."],
+  copilot:["Copilot grounding","Answers are built only from the product's own records - runs, matches, exceptions, evaluations. Questions outside that data are refused.","answer = f(records) with citations; no record, no claim","Every source shown can be opened and checked against the system's own data."],
+  parsefld:["Verified extraction","The fields the parser pulled out of the email. Every invoice or PO reference is checked against the ledger before it is trusted.","verified iff every invoice/PO reference exists in the ledger; invented references are flagged by name","The AI suggests; a fixed check verifies. That split is what makes it safe to post cash from an AI reading."],
+  milpacc:["MILP accuracy","On test cases with known answers, how often the optimiser picks exactly the right invoices. Computed live, through the same steps a real payment takes.","correct sets / labelled cases","This is the main quality figure for the solver. It is recomputed on every page load, so it cannot go stale."],
+  greedyacc:["Greedy accuracy","The same test cases, run through a simple first-fit method that takes invoices in order while they fit.","correct sets / labelled cases, identical candidate sets","The simple method fails exactly where the choice gets hard - when age, discounts and deductions all matter at once."],
+  exactrate:["Exact rate","How often the solver's answer leaves exactly $0.00 unexplained.","zero-residual solutions / labelled cases","Close is not enough to post. A near match is still unapplied cash."],
+  mae:["Delay model MAE","On invoices held back from training and predicted later, how far off the predicted payment date was, on average, in days.","MAE = mean |predicted - actual| days over the test split; naive baseline predicts the mean","3.42 days of average error, against 25.78 for a naive guess, is what makes the forecast usable."],
+  live:["Live run stream","The batch engine emits an event at each mechanism step - candidate resolution, the MILP solve, deduction judgement, the posting decision - and this view renders them as they arrive over a server-sent event stream.","events: batch_start -> payment_start -> resolved -> solved -> deduction -> decision -> batch_done","Proof the interface is wired to a real engine: stop the server and the stream stops; run a bigger file and it takes visibly longer."],
+  appr:["Approvals queue","Matches that are solved but held by policy - most often the maker-checker rule: above a set amount, a second person must sign before posting.","held iff status = PROPOSED; approving sets APPROVED_POSTED and writes an audit entry","This is the control that lets automation be aggressive everywhere else: big money always gets a second pair of eyes."],
+  audit:["Audit trail","An append-only record of consequential actions: who (which role), what, which record, and the payload.","written server-side at action time; this interface offers no edit or delete","When something is questioned months later, this is the page that answers it."],
+  ailayer:["AI extraction layer","Remittance text is turned into structured fields by an AI model when a Gemini key is configured on the server, and by a deterministic extractor otherwise. Both feed the same verifier.","mode is reported by the server on every parse; it is never inferred from the output","The honest demo posture: the AI path is fully built and one environment variable from live, and the fallback is labelled, never disguised."],
+  payid:["Payment","One incoming payment (a wire, ACH credit or lockbox item) that the agent must explain with invoices.","identified by payment_id inside its run; amount + payer + fingerprint are its identity","Everything in a run is organised around explaining payments - invoices are the means, payments are the questions."],
+  invid:["Invoice","One open receivable the agent may settle: who owes it, how much, its PO, discount terms and age.","gross is the full face value; net = gross minus any discount actually taken","An invoice leaves the open list the moment a batch settles it, so it can never be spent twice."],
+  disc:["Discount taken","The early-payment discount applied to this invoice line inside this match - not the rate on the invoice, the money actually taken.","discount_cents = gross x discount_rate when the solver sets d_i = 1, else 0","The solver only takes a discount when doing so helps the payment balance exactly; the objective charges 50 per discount taken so it is never taken casually."],
+  netapp:["Net applied","The cash actually applied from this invoice line toward the payment.","net = gross - discount taken","The nets are what must satisfy the cash conservation equation - their sum, minus any accepted deduction, plus the residual, equals the payment."],
+  gross:["Gross","The invoice's full face value before any discount.","as issued on the invoice; stored in integer cents","All money in the engine is integer cents end to end, so gross figures never drift by rounding."],
+  amt:["Amount","The money value of the row - a payment received, an invoice owed, or a total, depending on the table.","stored and computed in integer cents; shown in dollars","One column name, one meaning per table - the panel above the table says which."],
+  when:["When (UTC)","The timestamp the run or record was created, in UTC.","stored as ISO 8601 at creation time","UTC everywhere avoids the classic close-process bug of a payment landing on different days in different timezones."],
+  mval:["Value","The measured figure for the metric on that row.","computed by the model harness on held-out data (see the Metric info)","Every value here is recomputed from the current deployment - none is copied from documentation."],
+  matchstatus:["Match status","What the solver concluded for this payment.","OPTIMAL_EXACT_MATCH: an invoice set balances the payment to the cent. PARTIAL_MATCH: invoices applied but a residual remains. NO_MATCH: nothing safe to propose","The status is the solver's mathematical conclusion, separate from the posting decision (auto-posted vs proposed) that policy makes from it."],
+  runstatus:["Run status","Where the batch stands as a whole.","COMPLETED means every payment in the batch reached a decision - posted, proposed or excepted","A completed run can still contain exceptions; completed describes the process, not perfection."],
+  state:["State","The live state of the row: for an invoice, open or overdue; for a readiness check, ok or error.","invoice state derives from due_in_days; readiness state from the live check result","State is always derived from current data at render time, never stored as a stale label."],
+  sev:["Severity","How urgently a human should look at this exception.","HIGH: money is blocked or duplicated. MEDIUM: a partial explanation exists but a residual needs review","Severity drives the order of the analyst queue - HIGH first, always."],
+  lines:["Matched invoices","The exact invoice set the solver selected for this payment.","chosen by the MILP under the cash conservation equality; listed in selection order","This set is the match. Open the row to see each line's gross, discount and net, and the derivation that proves the set balances."],
+  exckind:["Exception kind","The class of problem that stopped auto-posting.","DUPLICATE_PAYMENT: same payer + amount + currency seen in this batch. UNRESOLVED_RESIDUAL: money left unexplained. NO_MATCH: no safe set found","The kind decides the recommended action and the severity - it is a diagnosis, not just an error."],
+  expct:["Expected","The correct answer, stated before the run - by the scenario author or the human who labelled the evaluation case.","fixed before execution; the run cannot change it","Stating the expectation first is what makes the verdict a test instead of a story."],
+  actual:["Actual","What the engine really produced when it ran.","read from the run's stored results","Expected vs actual, side by side, is the whole honesty model of the Use Cases and Evaluations pages."],
+  cust:["Customer","The buyer who owes the invoice - the ledger-side identity the payer name on a payment is resolved against.","exact name, alias table, or Jaro-Winkler fuzzy match at 0.88 or above","Name mismatches between bank wires and ledgers are the number one cause of failed matching; three rungs of the resolver exist for this column."],
+  chk:["Check","What is being verified on this row - a readiness probe or one field of a scenario verdict.","each check is independent and reports its own pass or fail","A page of green checks where each was computed separately means more than one overall green."],
+  held:["Why it is held","The exact reason this solved match was not posted automatically.","the decision_reason recorded by the engine at run time - policy threshold, non-exact status, or residual","A hold without a reason would be a black box; every hold carries its sentence."],
+  whathappens:["What happens","The step's effect on the payment as it passes through this layer.","read top to bottom, the rows are one payment's full journey","If a payment misbehaves, this column tells you which layer to inspect first."],
+  week:["Week","The 7-day bucket of the forecast horizon.","week 1 starts today; buckets are built from predicted payment dates","Weekly buckets match how treasurers actually plan - daily precision would be false precision."],
+  tech:["Technology","The real technology running this layer in this deployment.","as deployed - not the roadmap version","Diligence reviewers check this column against the running system; it only lists what is actually in the build."],
+  solver:["Solver","Which algorithm produced this match.","milp: the exact optimiser. greedy: the baseline, shown in comparisons","Production matches are MILP; greedy appears only as the honest straw man in evaluations and derivations."],
+  runid:["Run","One execution of the batch engine over a set of payments.","run_id is unique; its policy snapshot, matches and exceptions are stored with it","Everything the agent did is grouped by run, so any number on the dashboard can be traced to the run that produced it."],
+  matchesn:["Matches","How many payments in this run received a solver decision (posted or proposed).","count of match records on the run; duplicates and no-matches appear under Exceptions instead","Matches + exceptions = every payment in the run. Nothing disappears between the two."],
+  autopn:["Auto-posted","How many matches in this run posted with zero human touch.","count of matches with status AUTO_POSTED","The numerator of the touchless rate - and the figure maker-checker holds can reduce on purpose."],
+  excn:["Exceptions","How many payments in this run the agent refused to settle alone.","count of exception records on the run","A healthy run on hostile data has exceptions; a run with none on bad data would be the worrying sign."],
+  row:["Row","The line number in the file you uploaded.","counted from the file's first data row","When a row is quarantined, this number is how you find it in your own file to fix it."],
+  ref:["Reference","What the value is compared against - a baseline, a threshold, or a definition.","printed next to every metric it qualifies","A metric without its reference invites misreading; this column is the guardrail."],
+  rec:["Record","The stored object the audit entry is about - a run, a match, a policy.","entity type + its id","From any audit line you can walk straight to the record it describes."],
+  prio:["Priority score","The collections ranking figure for this invoice.","score = amount x (1 + overdue/30) x (1 + max(predicted delay,0)/20)","Bigger, later and slower-paying wins - the queue order is this number, descending."],
+  preddelay:["Predicted delay","How late this customer is expected to pay this invoice, from the delay model.","predicted days beyond terms; graded at MAE 3.42 days on held-out data","This single prediction feeds both the collections queue and the forecast bands."],
+  po:["Purchase order","The PO number on the invoice - often the only reference a payer includes on a wire.","matched exactly, or after OCR normalisation, against payment references","PO matching is the second rung of candidate resolution and one of the strongest signals in B2B payments."],
+  p10:["P10 (cautious)","The cautious cash-in figure for the week: receipts exceed it in about 90% of simulated outcomes.","10th percentile of simulated weekly totals","Plan commitments against P10; anything above it is upside, not plan."],
+  p50:["P50 (expected)","The median simulated cash-in for the week - the single best planning estimate.","50th percentile of simulated weekly totals","Half of simulated outcomes land above, half below - the honest middle."],
+  p90:["P90 (optimistic)","The optimistic figure: only about 10% of simulated outcomes exceed it.","90th percentile of simulated weekly totals","Useful for spotting upside, dangerous as a plan - the band exists so nobody has to guess which number a single forecast was."],
+  overdue:["Overdue","How far past its due date this invoice is.","days = today - due date, when positive","Overdue days feed the collections priority score directly - age is money at risk."],
+  objterm:["Objective term","One line of the solver's objective function, with the run's real values substituted.","objective total = sum of the terms; the solver minimises it","This is the MILP's reasoning made visible: reward for settling old invoices, charges for discounts, deductions, and a dominating charge per residual cent."],
+  model:["Model","The trained model being graded on this row.","delay regressor and validity classifier, retrained by the harness on the current data basis","Models are graded on data they never trained on - see the Metric and Value columns for the scores."],
+  metric:["Metric","The grading measure for the model on this row.","MAE for delay (days of error), ROC AUC for validity ranking","Each metric was chosen because it cannot be flattered by an easy test set."],
+  actor:["Actor","Who or what performed the audited action.","api:<role> for interface actions; system for engine-internal writes","Role, not person, in this demo posture - with tenant keys issued, the key's role is what gets recorded."],
+  action:["Action","The consequential event that was recorded.","written at the moment the action happens: batch_run_completed, match_approved, match_rejected","If it is not in this list, it did not happen - the trail is the system's memory of itself."],
+  detail:["Detail","The payload recorded with the action - the numbers or ids that make the entry checkable.","stored as JSON exactly as written at action time","Detail is what separates an audit trail from a log of vibes: every entry can be re-verified."],
+  age:["Age (days)","How long the invoice has been open.","days since issue, as carried in the ledger","Age is an input to the solver: the objective rewards settling older invoices first, so age changes outcomes, not just reports."],
+  due:["Due in (days)","Days until the invoice is due; negative means overdue.","due date minus today, as carried in the ledger","Together with predicted delay, this decides whether an invoice is a collections problem or just a waiting game."],
+  comp:["Component","One building block of the platform, named by the job it does.","each component maps to a module in the codebase","The architecture page is drawn from the real module map - a reviewer can open the repo and check every row."],
+  field:["Field","The data field being checked or shown on this row.","as named in the API schema","Field names are identical in the UI, the API and the database - one vocabulary end to end."],
+  layer:["Layer","The architectural layer this row belongs to.","layers are ordered by the request path: interface, engine, data, platform","A problem is located by its layer first - this column is the map."],
+  matches:["Matches panel","Every payment in the selected run that received a solver decision, with its status, invoices, residual and confidence.","read from the run's stored match records","Click any row: the full evidence and derivation for that decision opens below."],
+  expanel:["Exceptions panel","Every payment in the selected run that the agent would not settle alone, each with kind, severity and the action it recommends.","read from the run's stored exception records","This panel is the analyst's queue for the run - pre-diagnosed, pre-prioritised."],
+  runhist:["Run history","Every batch this workspace has executed, newest first.","one row per stored run, with its match, auto-post and exception counts","Select any run to reopen its matches and exceptions exactly as they were decided."],
+  modelq:["Model quality","How the two trained models score on data they never saw in training.","time-ordered holdout: the newest 20% of history, graded after training on the oldest 80%","Held-out grading is the only kind worth showing - training scores would flatter the models."],
+  ready:["Readiness checks","Live probes the platform runs on itself before it should be trusted with traffic.","control database reachable, data directory writable, models loaded","A failed check here is the system refusing to pretend - the /ready endpoint returns the same verdict to orchestrators."],
+  reqpath:["Request path","The exact route one payment takes through the deployed system, layer by layer.","traced from the API surface to storage","This is the path the Live Run visualises - the same steps, drawn statically."],
+  platcomp:["Platform components","The deployable pieces of the product and the technology each actually runs on.","as built in this repository","Every row can be verified against the codebase - component, module and technology line up."],
+  designrules:["Design rules","The five invariants the whole system is built to never break.","each rule names the mechanism that enforces it","Rules without mechanisms are posters; these are enforced in code and covered by tests."],
+  evidence:["Match evidence","The complete proof pack for one decision: how it was found, what was selected, the derivation, and the deduction judgement if any.","assembled from the match's stored record","An auditor should be able to re-derive the decision from this panel alone - that is the standard it is built to."],
+  casecard:["Use-case pack","One hard, named problem with its correct answer stated up front, graded against a real clean-room run.","the card states the story and what it proves; Run executes and grades it","The pack library is the product's proof shelf - each card is a claim, and the run is the evidence."],
+  svcstatus:["Service status","Whether the API is up and its readiness gate passes right now.","read live from /health and /ready on every visit to this page","The same verdict an orchestrator would use to route traffic - the UI never shows a healthier picture than the probes report."],
+  authmode:["Auth mode","How requests to this deployment are authenticated.","dev-open while no tenant keys exist and no bootstrap key is set; per-tenant API keys afterwards","Dev-open is a deliberate demo posture and it announces itself - the moment keys are issued, every request needs one."],
+  datadir:["Data directory","Where this deployment's per-tenant SQLite databases live.","one database file per tenant under this directory","Isolation you can point at: a tenant's data is a file, and it never mixes with another tenant's."],
+  formula:["Formula","The symbolic form of this objective term, before the run's values are substituted.","the same expression the solver's code builds; the Value column is its evaluation on this match","Formula plus value is the complete audit pair - what the rule is, and what it came to here."],
+  milpgot:["MILP got","The invoice set the optimiser actually chose for this labelled case.","produced live by the production solver path when this page loads","Compared against Expected on the same row - the case passes only if the sets are identical."],
+  milpcol:["MILP verdict","Whether the optimiser's set for this case equals the labelled answer.","correct iff MILP got == Expected","The per-case truth behind the accuracy card above."],
+  greedycol:["Greedy verdict","Whether the first-fit baseline's set for this case equals the labelled answer.","correct iff greedy set == Expected, on the identical candidate list","Greedy's misses cluster where age, discounts and deductions interact - exactly the cases MILP exists for."],
+  step:["Step","The position of this stage in one payment's journey through the system.","numbered in execution order, 1 first","When a payment's outcome surprises you, find its step here and you have found the layer that decided it."],
+  stage:["Stage","The named phase of processing at this step.","one stage per row; stages map to modules in the codebase","Stage names are shared by the UI, the live-run stream and the logs - one vocabulary for one pipeline."],
+  methodsec:["This formula family","One group of the product's governing formulas, served by the API from the same code that computes with them.","the section below states each formula and what it means in plain words","If a number anywhere in the product cannot be traced to a section on this page, that is a bug - this page is the contract."],
+  howcomputed:["How it is computed","The exact expression or procedure, in the notation the Methodology page defines.","monospace, integer cents, summation over the candidate set unless stated","These are the production formulas, not illustrations - the derivation on any match substitutes a real run's values into them."],
+  apprdec:["Your decision","Approve posts this match as if the agent had posted it; reject returns the payment to the exception queue.","recorded with your role and the time, in the audit trail, either way","The decision is attributable and permanent - that is what makes delegating the rest to the agent safe."],
+  errorq:["Error","Why this uploaded row was refused, in the validator's own words.","the first failed validation rule for the row: missing field, bad amount, duplicate id","Fix the row in your source file and re-import - quarantined rows are never partially applied or silently repaired."],
+  pex:["Stage 1 - Extract","An extractor reads the free text and proposes structured payment fields.","Gemini when a server key is configured; the deterministic extractor otherwise - the engine used is named on the card","Proposal only: nothing extracted here is trusted until stage 3 verifies it."],
+  psch:["Stage 2 - Schema check","The proposed fields are validated against the required shape before anything else happens.","required: payer, amount_cents, invoice_refs, po_refs, deduction_cents, deduction_reason","A malformed AI output dies here, cheaply, instead of reaching the ledger."],
+  pver:["Stage 3 - Verify references","Every invoice and PO reference in the extraction is checked against the open ledger.","a reference is verified iff it exists among open invoices or their POs; invented ones are flagged by name","This is the control that makes an AI front door safe: hallucinated references cannot post cash."],
+  ptrust:["Stage 4 - Trust decision","Whether the parsed payment may flow into reconciliation as-is.","verified iff stage 3 flagged nothing; otherwise a human resolves the flags first","Trust is a gate with a rule, not a feeling - and the rule is the same in AI and deterministic modes."],
+  copsugg:["Suggested questions","Starting points the copilot can answer from this workspace's records right now.","each maps to a grounded query over runs, matches, exceptions or evaluations","Ask anything else about the workspace too - if the records cannot answer it, the copilot says so instead of guessing."],
+  prodthesis:["Product thesis","Why this product exists, the rule it is built on, and the metric it lives by - in the author's own words.","the four paragraphs below: problem, design rule, wedge, north-star metric","Everything else in the product is downstream of this page; if a feature argues with it, the feature loses."],
+  auc:["Validity classifier AUC","How well the validity model ranks deductions: real ones scored above fake ones, measured on data it never trained on.","ROC AUC: probability a random valid deduction scores above a random invalid one; 0.5 is chance","AUC cannot be flattered by an easy test set - it grades the ranking itself."]};
+function fillInfo(){
+  document.querySelectorAll(".specslot").forEach(el=>{const sp=SPECS[el.dataset.spec]; if(sp && !el.dataset.filled){el.innerHTML=spec(sp[0],sp[1],sp[2],sp[3]); el.dataset.filled="1"}});
+  document.querySelectorAll("[data-info]").forEach(el=>{const sp=INFO[el.dataset.info]||SPECS[el.dataset.info]; if(sp && !el.dataset.filled){el.innerHTML=spec(sp[0],sp[1],sp[2],sp[3]); el.dataset.filled="1"}});
+}
+function derivationHtml(d){
+  if(!d) return "";
+  const eq=d.equation||{};
+  const terms=(d.objective_terms||[]).map(t=>`<tr><td>${esc(t.term)}</td><td><small>${esc(t.formula)}</small></td><td>${t.value}</td></tr>`).join("");
+  const cd=d.confidence_derivation||{};
+  const g=d.greedy_comparison||{};
+  return `<div class="detail"><b>Derivation - how this decision was computed</b><br>
+  Cash conservation: net applied ${money(eq.net_applied_cents||0)} - deduction accepted ${money(eq.deduction_applied_cents||0)} + residual ${money(eq.residual_cents||0)} = <b>${money(eq.payment_cents||0)}</b> received ${eq.balances?pill("equation balances","ok"):pill("does not balance","bad")}<br>
+  Invoices the solver was allowed to consider: ${d.candidates_considered ?? "-"} - solver score (objective total): <b>${d.objective_total ?? "-"}</b> (lower wins)
+  ${terms?`<table><tr><th>Objective term <span data-info="objterm"></span></th><th>Formula <span data-info="formula"></span></th><th>Value <span data-info="mval"></span></th></tr>${terms}</table>`:""}
+  Confidence: base ${cd.base ?? "-"} <small>(${esc(cd.base_rule||"")})</small><br>
+  Simple baseline on the same shortlist: ${(g.invoices||[]).join(", ")||"nothing"} - residual ${money(g.residual_cents||0)} (${esc(g.status||"")}). <small>${esc(g.reading||"")}</small></div>`;
+}
+function storedDetail(i){
+  const m=lastMatches[i];const res=m.result||{};
+  const lines=(res.lines||[]).map(l=>`<tr><td>${esc(l.invoice_id)}</td><td>${money(l.gross_cents)}</td><td>${money(l.discount_cents)}</td><td>${money(l.net_cents)}</td></tr>`).join("");
+  $("match-detail").innerHTML=`<div class="panel"><h3>Match evidence - ${esc(m.payment_id)} <span data-info="evidence"></span></h3><div class="detail">Decision <b>${esc(m.status)}</b> by solver <b>${esc(m.solver)}</b>, found via <b>${esc(res.matched_by||"-")}</b>, residual <b>${money(m.residual_cents)}</b>, confidence <b>${Number(m.confidence).toFixed(3)}</b>, solver time ${res.latency_ms??"-"} ms.${res.deduction_applied?" A claimed deduction was applied and judged by deduction intelligence.":""}</div>${derivationHtml(res.derivation)}${lines?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Net applied <span data-info="netapp"></span></th></tr>${lines}</table>`:"<small>No invoice lines - nothing was safe to propose.</small>"}</div>`;
+  $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800);
+}
+
+/* ---------- Seed + batch ---------- */
+async function seedAndRun(btn){
+  if(btn)btn.disabled=true;
+  try{
+    const s=await api("/api/v1/seed",{method:"POST"}); seedPayments=s.payments;
+    const b=await api("/api/v1/batches",{method:"POST",body:JSON.stringify({idempotency_key:"ui-"+Date.now(),payments:seedPayments})});
+    lastRun=b; renderRun(b);
+    $("dash-out").innerHTML=`<div class="msg">Batch complete: <b>${b.auto_posted} of ${b.payments}</b> payments auto-posted. Touchless rate <b>${(b.touchless_rate*100).toFixed(1)}%</b> on a deliberately exception-heavy seed set (duplicates, partials, unknown payer) - see Use Cases for the graded breakdown.</div>`;
+    go("run"); refreshDash(); toast("Batch run complete"); scheduleApprovalsJump(1500);
+  }catch(e){toast("Run failed: "+e.message)}finally{if(btn)btn.disabled=false}
+}
+function renderRun(b){
+  $("run-summary").innerHTML=`<div class="msg">Run <b>${esc(b.run_id)}</b> - ${b.payments} payments, <b>${b.auto_posted} auto-posted</b>, touchless ${(b.touchless_rate*100).toFixed(1)}%. Select a match for lines and counterfactuals.</div>`;
+  $("matches").innerHTML=`<table><tr><th>Payment <span data-info="payid"></span></th><th>Status <span data-info="matchstatus"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${b.results.map((r,i)=>`<tr class="clickable" onclick="liveDetail(${i})"><td>${esc(r.payment_id)}</td><td>${statusPill(r.status)}</td><td>${r.lines.map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money(r.residual_cents)}</td><td><div class="confbar"><i style="width:${Math.round(r.confidence*100)}%"></i></div><small>${Number(r.confidence).toFixed(2)}</small></td></tr>`).join("")}</table>`;
+  $("exceptions").innerHTML=b.exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th></tr>${b.exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  $("match-detail").innerHTML="";
+  fillInfo();
+}
+function liveDetail(i){
+  const r=lastRun.results[i];
+  const lines=r.lines.map(l=>`<tr><td>${esc(l.invoice_id)}</td><td>${money(l.gross_cents)}</td><td>${money(l.discount_cents)}</td><td>${money(l.net_cents)}</td></tr>`).join("");
+  const ded=r.deduction?`<div class="detail"><b>Deduction intelligence:</b> classified <b>${esc(r.deduction.classification?.label||"")}</b> (${esc(r.deduction.assigned_erp_reason_code||"")}), z-score ${r.deduction.z_score}, win probability ${r.deduction.win_probability??"n/a"}, expected recovery $${r.deduction.expected_recovery_value_usd} - decision: <b>${esc(r.deduction.autonomous_action)}</b>.<br><small>${esc(r.deduction.win_probability_basis||r.deduction.note||"")}</small>${(r.deduction.derivation||[]).length?`<br><b>Step by step:</b><br>${r.deduction.derivation.map(x=>"• "+esc(x)).join("<br>")}`:""}</div>`:"";
+  const pay=(seedPayments||[]).find(p=>p.payment_id===r.payment_id);
+  const whyBtn=pay?`<p><button class="btn ghost small" onclick="whyNot('${esc(r.payment_id)}',this)">Why was another invoice not picked? (counterfactual)</button> <span id="why-slot"></span></p>`:"";
+  $("match-detail").innerHTML=`<div class="panel"><h3>Match evidence - ${esc(r.payment_id)} <span data-info="evidence"></span></h3><div class="detail">Status <b>${esc(r.status)}</b>, matched by <b>${esc(r.matched_by)}</b>, auto-posted: <b>${r.auto_posted?"yes":"no"}</b>, residual <b>${money(r.residual_cents)}</b>, confidence <b>${Number(r.confidence).toFixed(3)}</b>.</div>${lines?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Net applied <span data-info="netapp"></span></th></tr>${lines}</table>`:"<small>No invoice lines.</small>"}${derivationHtml(r.derivation)}${ded}${whyBtn}<div id="why-out"></div></div>`;
+  $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800);
+}
+async function whyNot(pid,btn){
+  const pay=(seedPayments||[]).find(p=>p.payment_id===pid); if(!pay)return;
+  const inv=await api("/api/v1/invoices");
+  const notPicked=inv.find(i=>true);
+  const others=prompt("Invoice ID to test (e.g. INV-1003):", notPicked?notPicked.invoice_id:"");
+  if(!others)return;
+  btn.disabled=true;
+  try{const out=await api("/api/v1/why-not",{method:"POST",body:JSON.stringify({payment:pay,invoice_id:others})});
+    $("why-out").innerHTML=`<div class="detail"><b>Why not ${esc(others)}?</b><br>${esc(out.explanation||JSON.stringify(out))}</div>`;
+  }catch(e){$("why-out").innerHTML=`<div class="detail">${esc(e.message)}</div>`}finally{btn.disabled=false}
+}
+
+/* ---------- Upload center ---------- */
+const SAMPLE_INV=`invoice_id,customer,amount,po_number,discount_rate,age_days,due_in_days
+INV-2001,Apex Manufacturing,120.00,PO-11,0,40,-40
+INV-2002,Apex Manufacturing,80.00,PO-12,0,5,-5
+INV-2003,Apex Manufacturing,200.00,PO-13,0,30,-30
+INV-2004,BluePeak Electronics,1000.00,PO-21,0.02,25,-25`;
+const SAMPLE_PAY=`payment_id,payer,amount,remittance,deduction,deduction_reason
+Y1,Apex Manufacturing,200.00,"Wire for INV-2001 and INV-2002",,
+Y2,BluePeak Electronics,930.00,"BluePeak Electronics wire less 2% discount less deduction",50.00,shortage on delivery`;
+const TPL_INV=`invoice_id,customer,amount,po_number,discount_rate,age_days,due_in_days\n`;
+const TPL_PAY=`payment_id,payer,amount,remittance,deduction,deduction_reason\n`;
+function fillSample(k){$(k==="inv"?"csv-inv":"csv-pay").value=k==="inv"?SAMPLE_INV:SAMPLE_PAY;toast("Sample loaded - now press the import button")}
+function downloadTemplate(k){
+  const blob=new Blob([k==="inv"?TPL_INV:TPL_PAY],{type:"text/csv"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=k==="inv"?"autocash_invoices_template.csv":"autocash_payments_template.csv";a.click();URL.revokeObjectURL(a.href);
+}
+function wireDrop(dropId,fileId,taId){
+  const d=$(dropId),f=$(fileId);
+  d.onclick=()=>f.click();
+  f.onchange=()=>{if(f.files[0])readFile(f.files[0],taId)};
+  d.ondragover=e=>{e.preventDefault();d.classList.add("over")};
+  d.ondragleave=()=>d.classList.remove("over");
+  d.ondrop=e=>{e.preventDefault();d.classList.remove("over");if(e.dataTransfer.files[0])readFile(e.dataTransfer.files[0],taId)};
+}
+function readFile(file,taId){const r=new FileReader();r.onload=()=>{$(taId).value=r.result;toast("File loaded: "+file.name)};r.readAsText(file)}
+wireDrop("drop-inv","file-inv","csv-inv"); wireDrop("drop-pay","file-pay","csv-pay");
+function mappingChips(m){const e=Object.entries(m||{});return e.length?e.map(([k,v])=>pill(`${esc(v)} → ${esc(k)}`,"info")).join(" "):"<small>No headers mapped.</small>"}
+function quarantine(errs){return errs&&errs.length?`<p><b>Quarantined rows (${errs.length}):</b></p><table><tr><th>Row <span data-info="row"></span></th><th>Error <span data-info="errorq"></span></th></tr>${errs.map(e=>`<tr><td>${e.row}</td><td>${esc(e.error)}</td></tr>`).join("")}</table>`:""}
+async function importInvoices(btn){
+  const text=$("csv-inv").value.trim(); if(!text){toast("Paste or drop an invoices CSV first");return}
+  btn.disabled=true;
+  try{const d=await api("/api/v1/invoices/import",{method:"POST",body:JSON.stringify({csv_text:text})});
+    $("up-inv-out").innerHTML=`<div class="msg"><b>${d.imported} invoices imported</b> into the ledger. Source fingerprint <small>${esc(d.fingerprint)}</small>.<br><br>${mappingChips(d.mapping)}</div>${quarantine(d.errors)}`;
+    toast("Invoices imported"); refreshDash();
+  }catch(e){$("up-inv-out").innerHTML=`<div class="msg">${esc(e.message)}</div>`}finally{btn.disabled=false}
+}
+async function importPayments(btn){
+  const text=$("csv-pay").value.trim(); if(!text){toast("Paste or drop a payments CSV first");return}
+  btn.disabled=true;
+  try{const d=await api("/api/v1/payments/import",{method:"POST",body:JSON.stringify({csv_text:text})});
+    let runHtml="<small>No valid payment rows to reconcile.</small>";
+    if(d.run){lastRun=d.run;runHtml=`<div class="msg">Reconciled as run <b>${esc(d.run.run_id)}</b>: ${d.run.auto_posted} of ${d.run.payments} auto-posted, touchless <b>${(d.run.touchless_rate*100).toFixed(1)}%</b>. <a href="#" onclick="go('run');renderRun(lastRun);return false">Inspect matches and exceptions</a></div>`}
+    $("up-pay-out").innerHTML=`<div class="msg"><b>${d.imported} payments imported.</b> Source fingerprint <small>${esc(d.fingerprint)}</small>.<br><br>${mappingChips(d.mapping)}</div>${quarantine(d.errors)}${runHtml}`;
+    toast("Payments reconciled"); refreshDash();
+  }catch(e){$("up-pay-out").innerHTML=`<div class="msg">${esc(e.message)}</div>`}finally{btn.disabled=false}
+}
+
+/* ---------- Use cases ---------- */
+async function loadCases(){
+  try{const list=await api("/api/v1/scenarios");
+    $("case-grid").innerHTML=list.map(s=>`<div class="panel scen"><h3>${esc(s.title)} <span data-info="casecard"></span></h3><div class="story">${esc(s.story)}</div><div class="shows"><b>What it proves:</b> ${esc(s.shows)}</div><p style="margin:6px 0 0"><button class="btn small" onclick="runCase('${s.id}',this)">Run this use case</button></p></div>`).join("");
+  }catch(e){$("case-grid").innerHTML="<small>Could not load use cases.</small>"}
+}
+async function runCase(sid,btn){
+  btn.disabled=true; btn.textContent="Running...";
+  try{const d=await api(`/api/v1/scenarios/${sid}/run`,{method:"POST"});
+    const checks=d.checks.map(c=>`<tr><td>${esc(c.label)}</td><td>${esc(JSON.stringify(c.expected))}</td><td>${esc(JSON.stringify(c.actual))}</td><td class="${c.pass?"p":"f"}">${c.pass?"PASS":"FAIL"}</td></tr>`).join("");
+    $("case-out").innerHTML=`<div class="panel"><h3>${esc(d.scenario.title)} <span data-info="verdict"></span></h3><div class="verdict ${d.all_pass?"pass":"fail"}">${d.all_pass?"All checks passed - the engine did exactly what this use case promises.":"Some checks failed - the evidence below is the honest result."}</div>
+    <table class="checks"><tr><th>Check <span data-info="chk"></span></th><th>Expected <span data-info="expct"></span></th><th>Actual <span data-info="actual"></span></th><th>Verdict <span data-info="verdict"></span></th></tr>${checks}</table>
+    <p><small>Run ${esc(d.run.run_id)} - ${d.run.payments} payments, ${d.run.auto_posted} auto-posted, ${d.run.exceptions.length} exceptions.</small></p></div>`;
+    fillInfo();
+    $("case-out").scrollIntoView({behavior:"smooth"});
+  }catch(e){toast("Scenario failed: "+e.message)}finally{btn.disabled=false;btn.textContent="Run this use case"}
+}
+
+/* ---------- Ledger / forecast / evaluations / health ---------- */
+async function loadLedger(){
+  try{const inv=await api("/api/v1/invoices");
+    $("l-count").textContent=inv.length;
+    $("l-total").textContent=money(inv.reduce((a,i)=>a+i.gross_cents,0));
+    $("l-over").textContent=money(inv.filter(i=>i.due_in_days<0).reduce((a,i)=>a+i.gross_cents,0));
+    $("ledger-t").innerHTML=inv.length?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>PO <span data-info="po"></span></th><th>Amount <span data-info="amt"></span></th><th>Discount <span data-info="disc"></span></th><th>Age (d) <span data-info="age"></span></th><th>Due in (d) <span data-info="due"></span></th><th>State <span data-info="state"></span></th></tr>${inv.map(i=>`<tr><td>${esc(i.invoice_id)}</td><td>${esc(i.customer)}</td><td>${esc(i.po_number||"-")}</td><td>${money(i.gross_cents)}</td><td>${i.discount_rate? (i.discount_rate*100)+"%":"-"}</td><td>${i.age_days}</td><td>${i.due_in_days}</td><td>${i.due_in_days<0?pill("Overdue "+Math.abs(i.due_in_days)+"d","warn"):pill("Open","grey")}</td></tr>`).join("")}</table>`:"<small>The ledger is empty. Seed the demo workspace or import invoices from the Upload Center.</small>";
+  }catch(e){toast(e.message)}
+}
+async function loadForecast(){ fillInfo();
+  try{const f=await api("/api/v1/forecast");const c=await api("/api/v1/collections");
+    if(!f.weeks||!f.weeks.length){$("fc").innerHTML="<small>No open invoices yet. Seed the workspace or import invoices first.</small>";$("col").innerHTML="";return}
+    const max=Math.max(...f.weeks.map(w=>w.p90_cents),1);
+    const X=i=>46+i*138, Y=v=>190-(v/max)*160;
+    const pts=f.weeks.map((w,i)=>[X(i), Y(w.p50_cents)]);
+    const top=f.weeks.map((w,i)=>X(i)+","+Y(w.p90_cents));
+    const bot=f.weeks.slice().reverse().map(w2=>{const i=f.weeks.indexOf(w2);return X(i)+","+Y(w2.p10_cents)});
+    const band=top.concat(bot).join(" ");
+    const line=pts.map(p=>p.join(",")).join(" ");
+    $("fc").innerHTML=`<svg viewBox="0 0 640 220" style="width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:0"><polygon class="fband" points="${band}" fill="#3d75e8" opacity="0.22"></polygon><polyline class="fdraw" pathLength="1" points="${line}" fill="none" stroke="#7fa6f2" stroke-width="2.5"></polyline>${pts.map((p,i)=>`<circle class="fdot" style="animation-delay:${0.75+i*0.12}s" cx="${p[0]}" cy="${p[1]}" r="4" fill="#3d75e8"></circle><text x="${p[0]-16}" y="212" font-size="11" fill="#a7a49d">Week ${i+1}</text>`).join("")}</svg>
+    <table><tr><th>Week <span data-info="week"></span></th><th>P10 (cautious) <span data-info="p10"></span></th><th>P50 (expected) <span data-info="p50"></span></th><th>P90 (optimistic) <span data-info="p90"></span></th></tr>${f.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.p10_cents)}</td><td><b>${money(w.p50_cents)}</b></td><td>${money(w.p90_cents)}</td></tr>`).join("")}</table><p><small>Band = P10 to P90 across simulated payment timings from the delay model. Horizon ${f.horizon_days} days.</small></p>`;
+    $("col").innerHTML=c.length?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Customer <span data-info="cust"></span></th><th>Amount <span data-info="amt"></span></th><th>Overdue <span data-info="overdue"></span></th><th>Pred. delay <span data-info="preddelay"></span></th><th>Priority <span data-info="prio"></span></th></tr>${c.map(r=>`<tr><td>${esc(r.invoice_id)}</td><td>${esc(r.customer)}</td><td>${money(r.gross_cents)}</td><td>${r.overdue_days}d</td><td>${r.predicted_delay_days}d</td><td><b>${r.priority_score}</b></td></tr>`).join("")}</table>`:"<small>Nothing to collect.</small>";
+  }catch(e){toast(e.message)}
+}
+async function loadEval(){ fillInfo();
+  try{const ev=await api("/api/v1/evaluations");
+    $("eval-out").innerHTML=`<div class="cards" style="grid-template-columns:repeat(3,1fr)">
+    <div class="card"><div class="k">MILP accuracy <span data-info="milpacc"></span></div><div class="v">${(ev.milp_accuracy*100).toFixed(0)}%</div><div class="n">Agreement with human-labelled answers</div></div>
+    <div class="card"><div class="k">Greedy accuracy <span data-info="greedyacc"></span></div><div class="v">${(ev.greedy_accuracy*100).toFixed(0)}%</div><div class="n">The fast heuristic baseline</div></div>
+    <div class="card"><div class="k">MILP exact rate <span data-info="exactrate"></span></div><div class="v">${(ev.milp_exact_rate*100).toFixed(0)}%</div><div class="n">Solutions reconciling to $0.00 residual</div></div></div>
+    <div class="panel"><table><tr><th>Payment <span data-info="payid"></span></th><th>Expected <span data-info="expct"></span></th><th>MILP got <span data-info="milpgot"></span></th><th>Residual <span data-info="resid"></span></th><th>MILP <span data-info="milpcol"></span></th><th>Greedy <span data-info="greedycol"></span></th></tr>
+    ${ev.cases.map(c=>`<tr><td>${esc(c.payment_id)}</td><td>${c.expected.join(", ")}</td><td>${c.milp_got.join(", ")}</td><td>${money(c.milp_residual_cents)}</td><td class="${c.milp_correct?"p":"f"}" style="color:${c.milp_correct?"var(--ok)":"var(--bad)"};font-weight:650">${c.milp_correct?"correct":"miss"}</td><td>${c.greedy_correct?"correct":"miss"}</td></tr>`).join("")}</table>
+    <p><small>${esc(ev.basis||"")}</small></p></div>`;
+  }catch(e){toast(e.message)}
+}
+async function loadHealth(){ fillInfo();
+  try{const h=await api("/health");const r=await api("/ready");const m=h.model_metrics||{};
+    const imp=m.delay_baseline_mae_days?(((m.delay_baseline_mae_days-m.delay_mae_days)/m.delay_baseline_mae_days)*100).toFixed(0):"-";
+    $("health-out").innerHTML=`<div class="cards">
+    <div class="card"><div class="k">Service status <span data-info="svcstatus"></span></div><div class="v" style="font-size:20px;padding-top:5px">${pill(h.status==="ok"?"Healthy":"Degraded",h.status==="ok"?"ok":"bad")} ${pill(r.ready?"Ready":"Not ready",r.ready?"ok":"bad")}</div><div class="n">Readiness gate checked live</div></div>
+    <div class="card"><div class="k">Auth mode <span data-info="authmode"></span></div><div class="v" style="font-size:20px;padding-top:5px">${esc(h.auth)}</div><div class="n">${h.auth==="dev-open"?"Demo posture: no keys issued yet":"API keys enforced per tenant"}</div></div>
+    <div class="card"><div class="k">AI layer <span data-info="ailayer"></span></div><div class="v" style="font-size:20px;padding-top:5px">${h.gemini_configured?"Gemini live":"Deterministic"}</div><div class="n">Parser mode is always labelled in its output</div></div>
+    <div class="card"><div class="k">Data directory <span data-info="datadir"></span></div><div class="v" style="font-size:20px;padding-top:5px">${esc(h.data_dir)}</div><div class="n">Per-tenant SQLite stores</div></div></div>
+    <div class="panel"><h3>Model quality (held-out, time-ordered) <span data-info="modelq"></span></h3><div class="d">Trained on synthetic history with a learnable signal; graded on rows the models never trained on.</div>
+    <table><tr><th>Model <span data-info="model"></span></th><th>Metric <span data-info="metric"></span></th><th>Value <span data-info="mval"></span></th><th>Reference <span data-info="ref"></span></th></tr>
+    <tr><td>Payment-delay regressor</td><td>MAE (days) <span data-info="mae"></span></td><td><b>${m.delay_mae_days}</b></td><td>Naive baseline ${m.delay_baseline_mae_days} days - a ${imp}% improvement</td></tr>
+    <tr><td>Deduction-validity classifier</td><td>ROC AUC <span data-info="auc"></span></td><td><b>${m.validity_auc}</b></td><td>0.5 is chance; 1.0 is perfect</td></tr>
+    <tr><td>Training set</td><td>Rows</td><td>${m.train_rows} train / ${m.test_rows} test</td><td>Time-ordered 80/20 split</td></tr></table>
+    <p><small>Data basis: ${esc(m.data_basis||"")}</small></p></div>
+    <div class="panel"><h3>Readiness checks <span data-info="ready"></span></h3><table><tr><th>Check <span data-info="chk"></span></th><th>State <span data-info="state"></span></th></tr>${Object.entries(r.checks||{}).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${pill(String(v),v==="ok"?"ok":"bad")}</td></tr>`).join("")}</table></div>`;
+  }catch(e){toast(e.message)}
+}
+
+/* ---------- Parser / copilot / policy ---------- */
+async function doParse(btn){
+  btn.disabled=true;
+  try{const out=await api("/api/v1/parse",{method:"POST",body:JSON.stringify({text:$("parse-in").value})});
+    const f=out.fields||{};
+    const refs=[...(f.invoice_refs||[]),...(f.po_refs||[])].map(r=>pill(r,"info")).join(" ")||"<small>none</small>";
+    const issues=(out.verification?.issues||[]).map(x=>pill(x,"bad")).join(" ");
+    const pipeHtml=(out.pipeline&&out.pipeline.length)?`<div class="pipe">${out.pipeline.map(p=>`<div class="step"><div class="st">${esc(p.stage)} <span data-info="${p.stage.startsWith("1")?"pex":p.stage.startsWith("2")?"psch":p.stage.startsWith("3")?"pver":"ptrust"}"></span></div><div class="en">${esc(p.engine)}${p.ms?` - ${p.ms} ms`:""}</div><p>${esc(p.detail)}${p.issues&&p.issues.length?`<br><span style="color:var(--bad)">${p.issues.map(esc).join("; ")}</span>`:""}</p></div>`).join("")}</div>`:"";
+    $("parse-out").innerHTML=pipeHtml+`<div class="panel"><h3>Structured result <span data-info="parsefld"></span></h3>
+    <div class="detail">Parser: <b>${esc(out.source||"deterministic")}</b> ${out.degraded?pill("deterministic fallback - no Gemini key configured","warn"):""}<br>
+    Amount: <b>${f.amount_cents!=null?money(f.amount_cents):"-"}</b> - Payer: <b>${esc(f.payer||"-")}</b> - Claimed deduction: <b>${f.deduction_cents!=null?money(f.deduction_cents):"-"}</b>${f.deduction_reason?` (${esc(f.deduction_reason)})`:""}<br>
+    References extracted: ${refs}<br>${out.verification?(out.verification.verified?pill("Verifier: every reference exists in the open ledger","ok"):("Verifier flags: "+issues)):""}</div>
+    <details><summary><small>Raw response</small></summary><pre style="background:#0f172a;color:#dbeafe;padding:14px;border-radius:10px;overflow:auto;font-size:12px">${esc(JSON.stringify(out,null,2))}</pre></details></div>`;
+  }catch(e){toast(e.message)}finally{btn.disabled=false}
+}
+function addChat(who,text,cites){
+  $("chat").innerHTML+=`<div class="msg ${who==="Copilot"?"bot":""}"><b>${who}:</b> ${esc(text)}${cites&&cites.length?`<div class="cite">${cites.map(c=>pill(c,"info")).join(" ")}</div>`:""}</div>`;
+  window.scrollTo(0,document.body.scrollHeight);
+}
+async function askQ(q){$("chat-in").value=q;ask()}
+async function ask(){
+  const q=$("chat-in").value.trim(); if(!q)return;
+  addChat("You",q); $("chat-in").value="";
+  try{const a=await api("/api/v1/copilot",{method:"POST",body:JSON.stringify({question:q})}); addChat("Copilot",a.answer,a.citations)}
+  catch(e){addChat("Copilot","I could not answer that: "+e.message)}
+}
+const POLICY_FIELDS=[
+ ["name","Policy name","A label for this behaviour profile. Tenants can run several (for example a stricter month-end profile).","text"],
+ ["automation_threshold","Automation threshold (0-1)","Minimum solver confidence for a match to auto-post without a human. Higher is safer and slower; 0.90 is the conservative default.","number"],
+ ["age_weight","Age weight (FIFO pressure)","How strongly the solver prefers settling older invoices first. Protects DSO and audit narratives.","number"],
+ ["discount_penalty","Discount penalty","Cost assigned to assuming an early-pay discount. Stops the solver inventing discounts to force a fit.","number"],
+ ["residual_penalty","Residual penalty","Penalty per unexplained cent. Set astronomically high (1,000,000) so the optimiser would rather propose nothing than hide a residual.","number"],
+ ["deduction_penalty","Deduction penalty","Cost of accepting a claimed deduction inside a match. Works with the tolerance and dispute rules below.","number"],
+ ["tolerance_writeoff_cents","Tolerance write-off (cents)","Variances at or below this amount (default $25) are written off automatically - disputing them costs more than they are worth.","number"],
+ ["auto_dispute_min_recovery_usd","Auto-dispute min recovery ($)","A dispute claim is generated automatically only when expected recovery (win probability x claim - $45 processing cost) exceeds this.","number"],
+ ["dispute_processing_cost_usd","Dispute processing cost ($)","The fully-loaded cost of working one dispute. Feeds the expected-value rule honestly instead of disputing everything.","number"],
+ ["maker_checker_threshold_cents","Maker-checker threshold (cents)","Matches above this value ($10,000 default) require a second human approver even at full solver confidence.","number"]];
+async function loadPolicy(){
+  try{const d=await api("/api/v1/policy"); const p=d.policy||d;
+    $("policy-src").textContent="Source: "+(d.source||"tenant");
+    const POLF={automation_threshold:"auto-post iff OPTIMAL_EXACT_MATCH and confidence >= threshold",age_weight:"objective term per invoice: -(1 + age_days x age_weight)",discount_penalty:"objective cost of setting d_i = 1 (taking a discount)",residual_penalty:"objective cost per residual cent - dominates all other terms",deduction_penalty:"objective cost of setting y = 1 (accepting the claim)",tolerance_writeoff_cents:"claimed <= tolerance -> WRITE_OFF_TOLERANCE",auto_dispute_min_recovery_usd:"dispute iff win_prob x claimed - processing_cost > threshold",dispute_processing_cost_usd:"subtracted in the expected-recovery computation",maker_checker_threshold_cents:"match value above this requires a second approver",name:"profile label only - no mathematical role"};
+    $("policy-form").innerHTML=POLICY_FIELDS.map(([k,label,why,type])=>`<div class="polrow"><label for="pol-${k}">${label} ${spec(label,why,POLF[k]||"","Changing this value changes the next run's behaviour; the run records the policy it used.")}</label><input id="pol-${k}" type="${type}" step="any" value="${esc(p[k]??"")}"><div class="why">${why}</div></div>`).join("");
+  }catch(e){toast(e.message)}
+}
+async function savePolicy(btn){
+  btn.disabled=true;
+  try{const body={}; for(const [k] of POLICY_FIELDS){const el=$("pol-"+k); body[k]=el.type==="number"?parseFloat(el.value):el.value}
+    const d=await api("/api/v1/policy",{method:"PUT",body:JSON.stringify(body)});
+    toast("Policy saved - the next batch run uses it"); $("policy-src").textContent="Source: tenant (just saved)";
+  }catch(e){toast("Save failed: "+e.message)}finally{btn.disabled=false}
+}
+
+async function loadMethod(){
+  try{const d=await api("/api/v1/methodology");
+    $("method-out").innerHTML=d.sections.map(sec=>`<div class="panel"><h3>${esc(sec.title)} <span data-info="methodsec"></span></h3><div class="d">${esc(sec.what)}</div>
+    <table><tr><th style="width:230px">Component <span data-info="comp"></span></th><th>How it is computed <span data-info="howcomputed"></span></th></tr>${sec.formulae.map(f=>`<tr><td><b>${esc(f.name)}</b></td><td style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">${esc(f.expr)}</td></tr>`).join("")}</table>
+    <p style="font-size:13.5px;line-height:1.6"><b>What it means:</b> ${esc(sec.meaning)}</p></div>`).join("");
+  }catch(e){toast(e.message)}
+}
+let cbSeq=0;
+function cbRow(id,cust,amt,po,age){
+  cbSeq++;
+  return `<div style="display:grid;grid-template-columns:1.1fr 1fr .8fr 1fr .6fr;gap:8px;margin-bottom:8px" class="cb-row">
+  <input type="text" placeholder="Invoice ID" value="${id||("INV-"+cbSeq)}"><input type="text" placeholder="Customer" value="${cust||"Apex Manufacturing"}">
+  <input type="number" placeholder="Amount $" value="${amt||""}"><input type="text" placeholder="PO (optional)" value="${po||""}">
+  <input type="number" placeholder="Age days" value="${age||""}"></div>`;
+}
+function cbAddRow(id,cust,amt,po,age){$("cb-invs").insertAdjacentHTML("beforeend",cbRow(id,cust,amt,po,age))}
+cbAddRow("INV-1","Apex Manufacturing",300,"PO-1",40); cbAddRow("INV-2","Apex Manufacturing",200,"PO-2",10); cbAddRow("INV-3","Apex Manufacturing",500,"PO-3",25);
+async function cbRun(btn){
+  const invs=[...document.querySelectorAll(".cb-row")].map(r=>{const i=r.querySelectorAll("input");return {invoice_id:i[0].value.trim(),customer:i[1].value.trim()||"UNKNOWN",gross_cents:Math.round(parseFloat(i[2].value||0)*100),po_number:i[3].value.trim()||null,age_days:parseInt(i[4].value||0)}}).filter(x=>x.invoice_id&&x.gross_cents>0);
+  const refs=$("cb-refs").value.split(",").map(x=>x.trim()).filter(Boolean);
+  const pay={payment_id:"CUSTOM-1",payer_raw:$("cb-payer").value.trim()||"UNKNOWN",amount_cents:Math.round(parseFloat($("cb-amount").value||0)*100),references:refs,claimed_deduction_cents:Math.round(parseFloat($("cb-ded").value||0)*100),deduction_reason_raw:$("cb-reason").value,pod_verified_clean:$("cb-pod").checked,remittance_text:"Custom case from the builder"};
+  if(!invs.length){toast("Add at least one invoice with an amount");return}
+  btn.disabled=true;
+  try{const d=await api("/api/v1/scenarios/custom/run",{method:"POST",body:JSON.stringify({invoices:invs,payments:[pay]})});
+    const r=d.run.results[0];
+    const lines=r.lines.map(l=>`<tr><td>${esc(l.invoice_id)}</td><td>${money(l.gross_cents)}</td><td>${money(l.discount_cents)}</td><td>${money(l.net_cents)}</td></tr>`).join("");
+    const ded=r.deduction?`<div class="detail"><b>Deduction decision:</b> ${esc(r.deduction.autonomous_action)} (${esc(r.deduction.assigned_erp_reason_code||"")})<br>${(r.deduction.derivation||[]).map(x=>"• "+esc(x)).join("<br>")}</div>`:"";
+    $("cb-out").innerHTML=`<div class="detail">Status <b>${esc(r.status)}</b> - auto-posted: <b>${r.auto_posted?"yes":"no"}</b> - matched by <b>${esc(r.matched_by)}</b> - residual <b>${money(r.residual_cents)}</b></div>
+    ${lines?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Net applied <span data-info="netapp"></span></th></tr>${lines}</table>`:"<small>No invoices selected - the engine preferred proposing nothing over a bad fit. Read the derivation for why.</small>"}
+    ${derivationHtml(r.derivation)}${ded}`;
+    $("cb-out").scrollIntoView({behavior:"smooth",block:"nearest"});
+  }catch(e){toast("Case failed: "+e.message)}finally{btn.disabled=false}
+}
+const LOADERS={dash:refreshDash,ledger:loadLedger,forecast:loadForecast,eval:loadEval,health:async()=>{await loadHealth();await loadAudit()},cases:loadCases,policy:loadPolicy,method:loadMethod,run:()=>loadApprovals(),parse:loadAiStrip};
+async function runLive(btn){
+  btn.disabled=true; btn.textContent="Running...";
+  const out=$("live-out");
+  out.innerHTML=`<div class="grid2" style="align-items:start"><div id="live-lanes"></div><div id="live-log"></div></div><div id="live-summary" style="margin-top:10px"></div>`;
+  const lanes=$("live-lanes"), log=$("live-log"), lanesById={};
+  const t0=performance.now();
+  const stamp=()=>(((performance.now()-t0)/1000).toFixed(2)+"s").padStart(6," ");
+  const logLine=(html)=>{log.innerHTML+=`<div><span class="t">${stamp()}</span> ${html}</div>`; log.scrollTop=log.scrollHeight};
+  const chip=(lane,i,state,label)=>{const c=lane.querySelectorAll(".chip")[i]; if(!c)return; c.className="chip "+state; if(label)c.innerHTML=label};
+  try{
+    const res=await fetch("/api/v1/runs/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({seed:true})});
+    if(!res.ok||!res.body) throw new Error("stream failed: "+res.status);
+    const reader=res.body.getReader(), dec=new TextDecoder(); let buf="";
+    while(true){
+      const {done,value}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let idx; while((idx=buf.indexOf("\n\n"))>=0){
+        const raw=buf.slice(0,idx); buf=buf.slice(idx+2);
+        if(!raw.startsWith("data: ")) continue;
+        const e=JSON.parse(raw.slice(6));
+        if(e.type==="batch_start"){logLine(`<span class="hl">BATCH</span> ${e.run_id} - ${e.payments} payments`)}
+        else if(e.type==="payment_start"){
+          const lane=document.createElement("div"); lane.className="lane";
+          lane.innerHTML=`<div class="who"><b>${esc(e.payment_id)}</b> - ${esc(e.payer)}<small>${money(e.amount_cents)}</small></div><div class="stages"><span class="chip">1 RESOLVE</span><span class="chip">2 SOLVE</span><span class="chip">3 DEDUCTION</span><span class="chip">4 DECISION</span></div>`;
+          lanes.appendChild(lane); lanesById[e.payment_id]=lane;
+          logLine(`${e.payment_id} received - ${money(e.amount_cents)} from ${esc(e.payer)}`);
+        }
+        else if(e.type==="resolved"){chip(lanesById[e.payment_id],0,"done",`1 RESOLVED - ${esc(e.matched_by)} - ${e.candidates} candidate${e.candidates==1?"":"s"}`); logLine(`${e.payment_id} candidates narrowed by <span class="hl">${esc(e.matched_by)}</span> to ${e.candidates}`)}
+        else if(e.type==="solved"){const L=lanesById[e.payment_id]; chip(L,1,e.status==="OPTIMAL_EXACT_MATCH"?"done":"on",`2 SOLVED - ${esc(e.status)} - ${e.latency_ms} ms`); if(!e.invoices.length) chip(L,2,"","3 NO DEDUCTION"); logLine(`${e.payment_id} solver: ${esc(e.status)}, residual ${money(e.residual_cents)}, confidence ${Number(e.confidence).toFixed(2)}, ${e.latency_ms} ms`)}
+        else if(e.type==="deduction"){chip(lanesById[e.payment_id],2,"on",`3 DEDUCTION - ${esc(e.decision||"judged")} ${esc(e.reason_code||"")}`); logLine(`${e.payment_id} deduction judged: <span class="hl">${esc(e.decision||"")}</span> (${esc(e.reason_code||"")}), z ${e.z_score}, expected recovery $${e.expected_recovery}`)}
+        else if(e.type==="decision"){const L=lanesById[e.payment_id]; if(L){const c3=L.querySelectorAll(".chip")[2]; if(c3&&c3.textContent.includes("DEDUCTION")&&!c3.className.includes("on")&&!c3.className.includes("done")) c3.innerHTML="3 NO CLAIM"; chip(L,3,e.decision==="AUTO_POSTED"?"done":(e.decision==="EXCEPTION"?"bad":"on"),`4 ${esc(e.decision)}`)} logLine(`${e.payment_id} decision: <span class="${e.decision==="AUTO_POSTED"?"ok":(e.decision==="EXCEPTION"?"bad":"hl")}">${esc(e.decision)}</span> - ${esc(e.reason)}`)}
+        else if(e.type==="batch_done"){$("live-summary").innerHTML=`<div class="verdict pass">Run ${e.run_id} complete: ${e.auto_posted} of ${e.payments} auto-posted, touchless ${Math.round(100*e.auto_posted/Math.max(e.payments,1))}% - total engine time ${e.ms} ms. Stored - see it in Dashboard run history.</div>`; logLine(`<span class="ok">DONE</span> ${e.run_id} in ${e.ms} ms`)}
+        else if(e.type==="error"){logLine(`<span class="bad">ERROR</span> ${esc(e.message)}`)}
+      }
+    }
+  }catch(err){out.innerHTML=`<div class="verdict fail">Live stream failed: ${esc(err.message)}. The stored-run path still works - use Seed workspace and run batch.</div>`}
+  btn.disabled=false; btn.textContent="Run the demo batch live";
+  scheduleApprovalsJump(1000);
+}
+let __apprN=0;
+async function loadApprovals(){
+  const out=$("appr-out"); if(!out)return 0;
+  try{
+    const list=await api("/api/v1/approvals");
+    const badge=$("appr-count");
+    if(badge){badge.style.display=list.length?"":"none"; badge.textContent=list.length+" waiting"}
+    __apprN=list.length;
+    out.innerHTML=list.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Amount <span data-info="amt"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Conf. <span data-info="conf"></span></th><th>Why it is held <span data-info="held"></span></th><th>Decision <span data-info="apprdec"></span></th></tr>${list.map(a=>`<tr><td>${esc(a.payment_id)}<br><small>${esc(a.run_id)}</small></td><td>${a.amount_cents==null?"-":money(a.amount_cents)}</td><td>${a.invoices.map(esc).join(", ")||"-"}</td><td>${Number(a.confidence).toFixed(2)}</td><td style="max-width:340px">${esc(a.decision_reason||"Held for review")}</td><td style="white-space:nowrap"><button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button></td></tr>`).join("")}</table>`:"<small>Nothing waiting. Matches appear here when policy holds one - lower the maker-checker threshold in Policy Studio and run a batch to see it work.</small>";
+  }catch(e){out.innerHTML=`<small>Could not load approvals: ${esc(e.message)}</small>`}
+  return __apprN;
+}
+let __apprTimer=null;
+async function scheduleApprovalsJump(ms){
+  // After the run's mechanism is on screen, glide to the approvals queue on
+  // the same page so held matches are never missed. Manual scrolling cancels.
+  __apprN=await loadApprovals();
+  if(!__apprN)return;
+  clearTimeout(__apprTimer);
+  const cancel=()=>{clearTimeout(__apprTimer);window.removeEventListener("wheel",cancel);window.removeEventListener("touchstart",cancel)};
+  window.addEventListener("wheel",cancel,{passive:true}); window.addEventListener("touchstart",cancel,{passive:true});
+  __apprTimer=setTimeout(()=>{cancel();const p=document.getElementById("approvals-panel");if(!p)return;
+    p.scrollIntoView({behavior:"smooth",block:"start"});
+    p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash");
+    toast(__apprN+(__apprN===1?" match is":" matches are")+" waiting for approval - this queue lives on this page, below the matches");
+  },ms);
+}
+async function decideMatch(id,decision,btn){
+  btn.disabled=true;
+  try{const r=await api("/api/v1/matches/"+id+"/decision",{method:"POST",body:JSON.stringify({decision})});
+    toast(decision==="approve"?"Match approved and posted":"Match rejected"); loadApprovals();}
+  catch(e){toast("Decision failed: "+e.message); btn.disabled=false}
+}
+async function loadAudit(){
+  const out=$("audit-out"); if(!out)return;
+  try{
+    const list=await api("/api/v1/audit");
+    out.innerHTML=list.length?`<table><tr><th>When (UTC) <span data-info="when"></span></th><th>Actor <span data-info="actor"></span></th><th>Action <span data-info="action"></span></th><th>Record <span data-info="rec"></span></th><th>Detail <span data-info="detail"></span></th></tr>${list.slice(0,30).map(a=>`<tr><td style="white-space:nowrap">${esc(String(a.created_at).replace("T"," ").slice(0,19))}</td><td>${esc(a.actor)}</td><td><span class="pill info">${esc(a.action)}</span></td><td>${esc(a.entity)} ${esc(a.entity_id)}</td><td><small>${esc(JSON.stringify(a.payload))}</small></td></tr>`).join("")}</table>`:"<small>No audit entries yet. Run a batch to create the first one.</small>";
+  }catch(e){out.innerHTML=`<small>Could not load audit trail: ${esc(e.message)}</small>`}
+}
+async function loadAiStrip(){
+  const el=$("ai-strip"); if(!el)return;
+  try{
+    const h=await api("/health");
+    el.innerHTML=h.gemini_configured
+      ?`<b style="color:var(--ok)">Gemini extraction is LIVE.</b> Every parse below is read by the AI model, then verified against the ledger before anything is trusted.`
+      :`<b style="color:var(--warn)">Deterministic mode.</b> No Gemini key is configured on this server, so a fixed-rule extractor is reading the text - and it is labelled as such on every result. Add a server-side GEMINI_API_KEY and the same pipeline switches to live AI extraction with no other change: the schema check and the ledger verification you see below are identical in both modes.`;
+  }catch(e){el.textContent="Could not check the AI layer status."}
+}
+/* ---- Serro-pass 2: live status bar, command palette, reveal, count-up ---- */
+async function loadStatusBar(){
+  try{
+    const h=await api("/health");
+    $("sb-svc").textContent="SERVICE "+(h.status==="ok"?"OK":"DEGRADED");
+    $("sb-dot").classList.toggle("bad",h.status!=="ok");
+    $("sb-ai").textContent="AI "+(h.gemini_configured?"GEMINI LIVE":"DETERMINISTIC");
+    $("sb-auth").textContent="AUTH "+String(h.auth||"-").toUpperCase();
+  }catch(e){ $("sb-svc").textContent="SERVICE UNREACHABLE"; $("sb-dot").classList.add("bad"); }
+}
+loadStatusBar(); setInterval(loadStatusBar,60000);
+
+const __rvObs=("IntersectionObserver" in window)?new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("rvin");__rvObs.unobserve(e.target)}})},{threshold:.06}):null;
+function initReveal(){
+  if(!__rvObs)return;
+  const sec=document.querySelector("main section.active"); if(!sec)return;
+  sec.querySelectorAll(".panel:not(.rvinit),.card:not(.rvinit)").forEach((el,i)=>{
+    el.classList.add("rvinit"); el.style.transitionDelay=((i%5)*45)+"ms"; __rvObs.observe(el);
+  });
+}
+initReveal();
+
+function animateDashNums(){
+  document.querySelectorAll("#dash .v").forEach(el=>{
+    const txt=el.textContent.trim(); if(!txt||txt==="-"||el.dataset.counted===txt)return;
+    const m=txt.match(/^([^0-9]*)([0-9][0-9,]*\.?[0-9]*)(.*)$/); if(!m)return;
+    el.dataset.counted=txt;
+    const target=parseFloat(m[2].replace(/,/g,"")); if(!isFinite(target)||target===0)return;
+    const dec=(m[2].split(".")[1]||"").length, comma=m[2].includes(","), t0=performance.now();
+    const fmt=v=>{let n=v.toFixed(dec); if(comma)n=Number(n).toLocaleString("en-US",{minimumFractionDigits:dec,maximumFractionDigits:dec}); return m[1]+n+m[3]};
+    const step=t=>{const p=Math.min((t-t0)/650,1), e=1-Math.pow(1-p,3); el.textContent=fmt(target*e); if(p<1)requestAnimationFrame(step); else el.textContent=txt};
+    requestAnimationFrame(step);
+  });
+}
+setInterval(animateDashNums,700);
+
+const CMDK_VIEWS=[["dash","01","Dashboard"],["cases","02","Use Cases"],["upload","03","Upload Center"],["run","04","Run Reconciliation"],["ledger","05","Ledger"],["forecast","06","Forecast and Collections"],["eval","07","Evaluations"],["health","08","Agent Health"],["method","09","Methodology"],["arch","10","Architecture"],["parse","11","Remittance Parser"],["copilot","12","Copilot"],["policy","13","Policy Studio"],["product","14","Product Thinking"]];
+let cmdkSel=0, cmdkItems=[];
+function cmdkAll(){
+  const views=CMDK_VIEWS.map(v=>({grp:"Go to",num:v[1],label:v[2],run:()=>go(v[0])}));
+  const acts=[
+    {grp:"Actions",num:"RUN",label:"Seed workspace and run the batch",run:()=>{const b=document.querySelector("button[onclick^='seedAndRun']"); seedAndRun(b||undefined)}},
+    {grp:"Actions",num:"LIVE",label:"Run the demo batch live (streamed)",run:()=>{go("run"); setTimeout(()=>runLive($("live-btn")),350)}},
+    {grp:"Actions",num:"APR",label:"Jump to the approvals queue",run:()=>{go("run"); scheduleApprovalsJump(250)}},
+  ];
+  return views.concat(acts);
+}
+function renderCmdk(q){
+  const all=cmdkAll().filter(it=>!q||it.label.toLowerCase().includes(q.toLowerCase()));
+  cmdkItems=all; cmdkSel=Math.min(cmdkSel,Math.max(all.length-1,0));
+  let lastGrp="";
+  $("cmdk-list").innerHTML=all.length?all.map((it,i)=>{
+    const gh=it.grp!==lastGrp?`<div class="cg">${it.grp}</div>`:""; lastGrp=it.grp;
+    return gh+`<div class="ci ${i===cmdkSel?"sel":""}" data-i="${i}"><span class="num">${it.num}</span>${esc(it.label)}</div>`;
+  }).join(""):'<div class="ci">No match - try a view name</div>';
+  $("cmdk-list").querySelectorAll(".ci[data-i]").forEach(el=>{
+    el.onclick=()=>pickCmdk(Number(el.dataset.i));
+    el.onmousemove=()=>{if(cmdkSel!==Number(el.dataset.i)){cmdkSel=Number(el.dataset.i); renderCmdk($("cmdk-in").value)}};
+  });
+}
+function openCmdk(){ $("cmdk").classList.add("open"); cmdkSel=0; $("cmdk-in").value=""; renderCmdk(""); setTimeout(()=>$("cmdk-in").focus(),30); }
+function closeCmdk(){ $("cmdk").classList.remove("open"); }
+function pickCmdk(i){ const it=cmdkItems[i]; if(!it)return; closeCmdk(); it.run(); }
+document.addEventListener("keydown",e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){ e.preventDefault(); $("cmdk").classList.contains("open")?closeCmdk():openCmdk(); return; }
+  if(!$("cmdk").classList.contains("open"))return;
+  if(e.key==="Escape")closeCmdk();
+  else if(e.key==="ArrowDown"){e.preventDefault(); cmdkSel=Math.min(cmdkSel+1,cmdkItems.length-1); renderCmdk($("cmdk-in").value)}
+  else if(e.key==="ArrowUp"){e.preventDefault(); cmdkSel=Math.max(cmdkSel-1,0); renderCmdk($("cmdk-in").value)}
+  else if(e.key==="Enter"){e.preventDefault(); pickCmdk(cmdkSel)}
+});
+$("cmdk-in").addEventListener("input",e=>{cmdkSel=0; renderCmdk(e.target.value)});
+$("cmdk").addEventListener("click",e=>{if(e.target.id==="cmdk")closeCmdk()});
+refreshDash();
+</script>
+</body></html>

@@ -1,15 +1,26 @@
 # Render Blueprint - deploy: connect this repo in Render, it reads this file.
-# Free plan notes: 512 MB RAM, spins down after 15 min idle (~1 min wake),
-# ephemeral filesystem (tenant data resets on redeploy - fine for a demo).
+# DEMO posture (deliberate): no bootstrap key is set, so the service opens
+# straight into the built-in demo workspace (synthetic data only). Do NOT
+# use this posture for real customer data - set AUTOCASH_BOOTSTRAP_KEY in
+# the Render dashboard to switch the app into API-key mode.
+# Free plan notes: 512 MB RAM (app uses ~155 MB measured), ephemeral
+# filesystem (demo data resets on redeploy), sleeps after 15 min idle.
 services:
   - type: web
     name: autocash
     runtime: docker
     plan: free
+    healthCheckPath: /health
     envVars:
-      - key: AUTOCASH_BOOTSTRAP_KEY
-        generateValue: true
+      - key: AUTOCASH_DATA_DIR
+        value: /tmp/autocash-data
       - key: GEMINI_API_KEY
-        sync: false   # set manually in the dashboard, or leave unset for deterministic mode
+        sync: false
       - key: AUTOCASH_RATE_LIMIT_PER_MIN
         value: "300"
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: MKL_NUM_THREADS
+        value: "1"
