@@ -71,7 +71,10 @@ def test_gemini_client_waits_long_enough_and_caps_output():
     generation must cap its output so a reasoning model cannot think
     forever before answering a small parse request."""
     import ai
-    assert ai.GEMINI_TIMEOUT_S >= 45
+    # long enough for a healthy model, short enough that the route can
+    # still return its graceful fallback before the platform ingress
+    # kills the request at ~60s (a 60s client wait earned a live 504)
+    assert 30 <= ai.GEMINI_TIMEOUT_S <= 45
     seen = {}
 
     def fake_transport(payload):

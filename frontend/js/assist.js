@@ -728,35 +728,44 @@ function renderMailList(){
 function mpDraftShell(sendLabel){
   return `<div id="mp-draft"><small>Drafting from the record...</small></div>`;
 }
+let __draftWd=null;
+function armDraftWatchdog(seq){
+  clearTimeout(__draftWd);
+  __draftWd=setTimeout(()=>{ const box=$("mp-draft");
+    if(box&&seq===MP_SEQ&&box.innerHTML.includes("Drafting from the record")){
+      box.innerHTML=`<small>Draft is taking longer than usual - the text is composed from the record and nothing is lost. <button class="btn small ghost" onclick="renderMailPreview()">Retry draft</button></small>`;
+    } },12000);
+}
 function renderMailPreview(){
   const h=HUB, el=$("mail-preview"); if(!el) return;
   const cat=HUB_CAT, items=h[cat]||[], i=HUB_SEL[cat], d=items[i];
   MP_SEQ++;
   if(!d){ el.innerHTML="<small>Nothing in this stream for the latest run.</small>"; return }
   if(cat==="disputes"){
-    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)}</b><span>${esc(d.payer)}</span>${pill((d.reason_code||"")+" - "+(d.classification||"deduction"),"warn")}</div>
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)} - ${esc(d.payer)}</b>${pill((d.reason_code||"")+" - "+(d.classification||"deduction"),"warn")}</div>
     <p style="margin:8px 0">Claim <b>${money(d.claimed_cents)}</b> · win probability <b>${d.win_probability}</b> · expected recovery <b>$${Number(d.expected_recovery_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b> · invoices ${(d.invoices||[]).map(esc).join(", ")||"-"}</p>
     <p>${pill(d.pod_clean?"POD trace: clean proof of delivery on file":"POD trace: proof of delivery not verified", d.pod_clean?"ok":"warn")} <small>Source: payment ${esc(d.payment_id)} and its deduction record in the latest run.</small></p>
     <div class="tonechips">${HUB_TONES.map(([t,l])=>`<button class="tonechip ${HUB_TONE===t?"on":""}" onclick="setHubTone('${t}')">${esc(l)}</button>`).join("")}</div>
     ${mpDraftShell()}`;
     hubDraftDisputeInto();
   } else if(cat==="chases"){
-    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)}</b><span>${esc(d.payer||"Unknown payer")}</span>${pill(d.kind,"warn")}</div>
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)} - ${esc(d.payer||"Unknown payer")}</b>${pill(d.kind,"warn")}</div>
     <p style="margin:8px 0"><b>${money(d.amount_cents)}</b>${d.residual_cents?` · unexplained residual ${money(d.residual_cents)}`:""} · ${esc(d.recommended_action||"")}</p>
     ${mpDraftShell()}`;
     hubDraftChaseInto();
   } else if(cat==="settlements"){
     const draft=(HUB.setlDrafts||[])[i];
-    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)}</b><span>${esc(d.payer)}</span>${pill(d.status==="AUTO_POSTED"?"Auto-posted":"Approved & posted","ok")}</div>
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)} - ${esc(d.payer)}</b>${pill(d.status==="AUTO_POSTED"?"Auto-posted":"Approved & posted","ok")}</div>
     <p style="margin:8px 0">${money(d.net_cents)} applied · invoices ${d.invoices.map(l=>esc(l.invoice_id)).join(", ")}${d.discount_cents?` · discount ${money(d.discount_cents)} applied`:""}${d.erp_document_id?` · SAP clearing document <b>${esc(d.erp_document_id)}</b>`:" · SAP document is the posting preview below"}</p>
     ${draft?`<input class="mhto" id="mp-to" placeholder="ap@customer.com"><textarea rows="9" id="mp-text">${esc(draft.body||"")}</textarea><p style="margin:6px 0 0"><button class="btn small" onclick="hubSendCurrent(this)">Send confirmation</button> <span id="mp-mail"></span> <small>Draft generated automatically when the cash posted - subject: ${esc(draft.subject||"")}</small></p>`:`<small>No generated draft found for this payment - the SAP payload below is its posting record.</small>`}
     <p style="margin:8px 0 0"><button class="btn small ghost" onclick="hubSapCurrent(this)">View SAP posting document</button></p><div id="mp-sap"></div>`;
   } else {
-    el.innerHTML=`<div class="mhhead"><b>${esc(d.invoice_id)}</b><span>${esc(d.customer)}</span>${pill(d.tone_label||"", d.tone==="escalation"?"bad":d.tone==="firm"?"warn":"info")}</div>
+    el.innerHTML=`<div class="mhhead"><b>${esc(d.invoice_id)} - ${esc(d.customer)}</b>${pill(d.tone_label||"", d.tone==="escalation"?"bad":d.tone==="firm"?"warn":"info")}</div>
     <p style="margin:8px 0">${money(d.gross_cents)} · ${d.due_in_days<0?Math.abs(d.due_in_days)+" days overdue":d.due_in_days===0?"due today":"due in "+d.due_in_days+" days"} · still open after the latest run, so it stays on the dunning list until a run or an approval settles it.</p>
     ${mpDraftShell()}`;
     hubDraftReminderInto();
   }
+  armDraftWatchdog(MP_SEQ);
 }
 function setHubTone(t){ HUB_TONE=t; renderMailPreview(); }
 function mpRenderDraft(r, sendLabel, srcPill){

@@ -42,7 +42,8 @@ def resolve_candidates(payment, open_invoices, aliases):
     return open_invoices, "all_ledger"
 
 def _usd(cents):
-    return f"${cents/100:,.2f}"
+    c = cents or 0
+    return f"-${abs(c) / 100:,.2f}" if c < 0 else f"${c / 100:,.2f}"
 
 def _kernel_available():
     import os
@@ -232,7 +233,7 @@ def run_batch(repo, payments, policy: Policy, idempotency_key, actor="system", o
         if decision_reason is None:
             decision_reason = ("Exact match, confidence "
                                f"{res.confidence:.2f} at or above the {policy.automation_threshold:.2f} threshold - posted by policy."
-                               ) if auto else (f"Not an exact match ({status}, residual ${res.residual_cents/100:,.2f}) - held for analyst review.")
+                               ) if auto else (f"Not an exact match ({status}, residual {_usd(res.residual_cents)}) - held for analyst review.")
         stage_ms["policy"] += (time.perf_counter() - _tp) * 1000
         _greedy = solve_greedy(pay, cands, policy)
         if {l.invoice_id for l in _greedy.lines} != {l.invoice_id for l in res.lines}:

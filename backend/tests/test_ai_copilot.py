@@ -58,3 +58,41 @@ def test_gemini_key_normalised_and_error_recorded():
     # and the deterministic fallback still answers when Gemini fails
     out = parse_remittance(TEXT, client=bad)
     assert out["source"] == "deterministic_fallback" and out["degraded"] is True
+
+
+def test_copilot_approvals_reflect_decisions():
+    # Regression (2 Nov 2026 strict audit): after a match was approved, the
+    # copilot still listed it as waiting - it filtered the run snapshot
+    # (status != AUTO_POSTED) instead of reading the live queue. The
+    # approvals answer must mirror repo.list_proposed() at all times.
+    repo = Repository(os.path.join(tempfile.mkdtemp(), "c.db"))
+    repo.add_invoice(Invoice("INV-9", "NorthPeak Industrial", "NorthPeak Industrial", 9640000, age_days=12))
+    pol = Policy(maker_checker_threshold_cents=5_000_000)
+    run_batch(repo, [Payment("P7", "NorthPeak Industrial", 9640000, references=["INV-9"])], pol, idempotency_key="cq1")
+    a = answer(repo, "Which payments are waiting for my approval?")
+    assert a["answer"].startswith("1 match"), a["answer"]
+    assert "P7" in a["answer"]
+    q = repo.list_proposed()
+    assert len(q) == 1
+    repo.update_match(q[0]["match_id"], "APPROVED_POSTED", repo.get_match(q[0]["match_id"])["result"])
+    a2 = answer(repo, "Which payments are waiting for my approval?")
+    assert "Nothing is waiting" in a2["answer"], a2["answer"]
+
+
+def test_money_format_sign():
+    # Negative amounts render -$16,750.00, never $-16,750.00, in every
+    # backend formatter and in the held-match decision reason end to end.
+    from batch import _usd as b_usd
+    from briefing import _money as br_money
+    from mail import _money as m_money
+    from copilot import _usd as c_usd
+    for f in (b_usd, br_money, m_money, c_usd):
+        assert f(-1675000) == "-$16,750.00", (f.__module__, f(-1675000))
+        assert f(52000) == "$520.00" and f(0) == "$0.00"
+    repo = Repository(os.path.join(tempfile.mkdtemp(), "c.db"))
+    repo.add_invoice(Invoice("INV-5", "BluePeak Electronics", "BluePeak Electronics", 3675000, age_days=20))
+    run_batch(repo, [Payment("P4", "BluePeak Electronics", 2000000, references=["INV-5"])], Policy(), idempotency_key="mq1")
+    q = repo.list_proposed()
+    assert len(q) == 1
+    reason = q[0]["decision_reason"] or ""
+    assert "-$16,750.00" in reason and "$-" not in reason, reason

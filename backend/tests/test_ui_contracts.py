@@ -151,7 +151,7 @@ def test_v31_staged_lifecycle_contract():
     per-agent counts, Next Step footers, the live-proof mutation, the
     quota-safe AI framing, and v31 cache-bust stamps."""
     html = client.get("/").text
-    assert 'css/livecube.css?v=33' in html and 'js/state.js?v=33' in html
+    assert 'css/livecube.css?v=36' in html and 'js/state.js?v=36' in html
     # v32 declutter: no standalone Load demo case button anywhere, and the
     # author credit sits above the nav so it can never clip items 12-14
     assert '>Load demo case</button>' not in html

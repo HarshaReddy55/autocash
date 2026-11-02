@@ -11,7 +11,8 @@ import re
 
 
 def _usd(cents):
-    return f"${(cents or 0) / 100:,.2f}"
+    c = cents or 0
+    return f"-${abs(c) / 100:,.2f}" if c < 0 else f"${c / 100:,.2f}"
 
 
 def _latest_run(repo):
@@ -153,16 +154,19 @@ def answer(repo, question, delay_model=None):
                 "citations": [f"run:{run_id}"], "action": None}
 
     # --- held / approvals list ---
+    # The queue is a LIVE state, not a run fact: decisions change it. Read
+    # the same source the approvals endpoint serves (current PROPOSED
+    # records), never the run snapshot - a decided match must disappear
+    # from this answer the moment it leaves the queue.
     if "held" in q or "approval" in q or "approve" in q or "waiting" in q:
-        held = [m for m in matches if m["status"] != "AUTO_POSTED"
-                and (m["result"] or {}).get("status") != "NO_MATCH"]
+        held = repo.list_proposed()
         if held:
-            parts = "; ".join(f"{m['payment_id']} ({((m['result'] or {}).get('decision_reason') or m['status']).split(' - ')[0]})"
+            parts = "; ".join(f"{m['payment_id']} ({(m.get('decision_reason') or 'held for review').split(' - ')[0]})"
                               for m in held[:6])
-            return {"answer": f"{len(held)} match(es) are waiting on a person in the latest run: {parts}. "
+            return {"answer": f"{len(held)} match(es) are waiting on a person: {parts}. "
                               f"They sit in the approvals queue on the Run page.",
                     "citations": [f"run:{run_id}"] + [f"match:{m['payment_id']}" for m in held[:6]], "action": None}
-        return {"answer": "Nothing is held from the latest run - every match posted on its own.",
+        return {"answer": "Nothing is waiting on a person - the approvals queue is empty.",
                 "citations": [f"run:{run_id}"], "action": None}
 
     # --- disputes and recovery ---

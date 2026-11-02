@@ -22,7 +22,8 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def _money(cents):
-    return f"${cents / 100:,.2f}"
+    c = cents or 0
+    return f"-${abs(c) / 100:,.2f}" if c < 0 else f"${c / 100:,.2f}"
 
 
 def mail_config():

@@ -16,7 +16,7 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 # was accepted, generation simply did not return inside 6s from that
 # network path). 20s keeps a slow answer usable; the deterministic
 # fallback still covers a genuine outage. GEMINI_TIMEOUT_S overrides.
-GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "60"))
+GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "40"))
 PARSE_SCHEMA_HINT = ('Return ONLY JSON with keys: payer (string), amount_cents (int), '
                      'invoice_refs (list of strings), po_refs (list of strings), '
                      'deduction_cents (int), deduction_reason (string)')

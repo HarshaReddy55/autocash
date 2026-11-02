@@ -4,7 +4,7 @@
 
 [![Build and push image to Amazon ECR](https://github.com/HarshaReddy55/autocash/actions/workflows/build-ecr.yml/badge.svg)](https://github.com/HarshaReddy55/autocash/actions/workflows/build-ecr.yml)
 The badge is the test gate: the workflow runs the full pytest suite
-(108 tests) and `cargo test` for the Rust kernel before any image is
+(110 tests) and `cargo test` for the Rust kernel before any image is
 built, and the build job does not run unless both pass.
 
 AutoCash matches incoming payments to open invoices autonomously,
