@@ -444,7 +444,11 @@ body.boot .ribbon .v,body.boot .cards .v{color:transparent;background:linear-gra
 /* v32: declutter + fold fixes */
 .casebar .cc{min-width:110px}
 .casebar .cc .v{white-space:nowrap}
-.navrow{padding-bottom:96px}
+.navrow{padding-bottom:16px;scrollbar-width:thin;scrollbar-color:#5a5a5a transparent;overscroll-behavior:contain}
+.navrow::-webkit-scrollbar{width:8px}
+.navrow::-webkit-scrollbar-track{background:transparent}
+.navrow::-webkit-scrollbar-thumb{background:#4c4c4c;border-radius:4px}
+.navrow::-webkit-scrollbar-thumb:hover{background:#6a6a6a}
 .jsonbox{max-height:150px;overflow:auto}
 details.agentref{margin-top:12px;border:1px solid var(--line);padding:10px 12px}
 details.agentref summary{cursor:pointer;font:600 12px var(--mono);letter-spacing:.05em;color:var(--mut)}

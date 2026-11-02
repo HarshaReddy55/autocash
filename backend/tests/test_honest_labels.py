@@ -62,3 +62,22 @@ def test_copilot_answers_auto_posted_cash():
     d = r.json()
     assert "$411,800.00" in d["answer"], d["answer"]
     assert d["citations"]
+
+
+def test_gemini_client_waits_long_enough_and_caps_output():
+    """v34: the live blocker was never only quota - the client gave up at
+    20s while the model was still answering (a timed live probe died at
+    21.2s). The client must wait at least 45s by default, and the JSON
+    generation must cap its output so a reasoning model cannot think
+    forever before answering a small parse request."""
+    import ai
+    assert ai.GEMINI_TIMEOUT_S >= 45
+    seen = {}
+
+    def fake_transport(payload):
+        seen.update(payload)
+        return {"candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}]}
+
+    client = ai.GeminiClient(api_key="test-key", transport=fake_transport)
+    assert client.generate_json("parse this") == {"ok": True}
+    assert seen["generationConfig"]["maxOutputTokens"] == 1024

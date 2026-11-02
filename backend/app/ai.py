@@ -16,7 +16,7 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 # was accepted, generation simply did not return inside 6s from that
 # network path). 20s keeps a slow answer usable; the deterministic
 # fallback still covers a genuine outage. GEMINI_TIMEOUT_S overrides.
-GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "20"))
+GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "60"))
 PARSE_SCHEMA_HINT = ('Return ONLY JSON with keys: payer (string), amount_cents (int), '
                      'invoice_refs (list of strings), po_refs (list of strings), '
                      'deduction_cents (int), deduction_reason (string)')
@@ -64,7 +64,8 @@ class GeminiClient:
         if not self.available:
             raise RuntimeError("GEMINI_API_KEY not configured")
         payload = {"contents": [{"parts": [{"text": prompt}]}],
-                   "generationConfig": {"responseMimeType": "application/json", "temperature": 0}}
+                   "generationConfig": {"responseMimeType": "application/json", "temperature": 0,
+                                        "maxOutputTokens": 1024}}
         try:
             out = json.loads(self._call(payload))
             LAST_GEMINI_ERROR["error"] = None
