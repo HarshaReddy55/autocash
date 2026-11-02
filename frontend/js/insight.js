@@ -213,7 +213,7 @@ async function loadDocsList(){
 }
 async function readDoc(name){
   document.querySelectorAll(".doclink").forEach(b=>b.classList.toggle("on",b.dataset.doc===name));
-  $("docs-body").innerHTML="<small>Loading...</small>";
+  $("docs-body").innerHTML='<div class="skl"><i></i><i></i><i></i></div>';
   try{ const d=await api(`/api/v1/docs/${encodeURIComponent(name)}`); $("docs-body").innerHTML=mdRender(d.markdown); }
   catch(e){ $("docs-body").innerHTML=`<div class="note">${esc(e.message)}</div>`; }
 }

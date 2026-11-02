@@ -75,3 +75,46 @@ def test_demo_tenant_switch_isolates_data():
     assert bad["active"] == "demo"
     # the default tenant still holds the seed case
     assert len(client.get("/api/v1/invoices").json()) == 19
+
+
+def test_navigation_is_the_fourteen_page_structure():
+    """v28: the 6-step tour is retired. The shell carries Harsha's 14 pages
+    in three named groups, in his order, and every page is its own section -
+    no composite step pages, no stepper, no next-step tour bar."""
+    import re
+    html = client.get("/").text
+    nav = re.findall(r'data-s="([a-z]+)"', html)
+    assert nav == ["dash", "cases", "upload", "run", "sap", "mail",
+                   "ledger", "forecast", "policy", "eval", "health",
+                   "method", "arch", "product"], nav
+    for grp in ["OPERATE", "INSIGHT &amp; GOVERNANCE", "EVALS &amp; ARCHITECTURE"]:
+        assert grp in html, grp
+    for sid in nav:
+        assert f'<section id="{sid}"' in html, sid
+    assert 'id="stepper"' not in html and 'id="tourbar"' not in html
+    assert 'id="step1"' not in html and 'id="gov"' not in html and 'id="score"' not in html
+    # the maker-checker queue lives on the Run page now, not in Policy Studio
+    run_sec = html[html.index('<section id="run"'):html.index('<section id="sap"')]
+    assert 'id="appr-out"' in run_sec
+    pol_sec = html[html.index('<section id="policy"'):html.index('<section id="eval"')]
+    assert 'id="policy-form"' in pol_sec and 'id="appr-out"' not in pol_sec
+
+
+def test_smooth_layer_contract():
+    """v29: the feel layer - loadbar + boot skeletons in the shell, no raw
+    'Loading...' text placeholders, brief preference + Escape + gen-cached
+    navigation + optimistic decisions wired in the scripts, and the CSS
+    primitives (spinner, skeleton, row flash) present."""
+    html = client.get("/").text
+    assert 'id="loadbar"' in html and 'class="lens-off boot"' in html
+    assert "<small>Loading" not in html
+    js = client.get("/js/state.js").text
+    for token in ["ac-brief", "Escape", "jumpToApprovals", "LOADED_GEN",
+                  "busyBtn", "bumpGen", "row-highlight-flash"]:
+        assert token in js, token
+    assist = client.get("/js/assist.js").text
+    assert "Posted to SAP" in assist and "Parked in suspense" in assist
+    css = client.get("/css/livecube.css").text
+    for token in [".skeleton-line", ".skeleton-card", ".spin",
+                  ".row-highlight-flash", "#loadbar", "prefers-reduced-motion"]:
+        assert token in css, token

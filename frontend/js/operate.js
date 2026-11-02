@@ -82,7 +82,7 @@ async function decorateExceptionActions(){
 function openChaseFor(pid){ HUB_CAT="chases"; go("mail"); toast("The remittance inquiry for "+pid+" is drafted in this queue - Unapplied / Exception Wire Inquiries"); }
 async function runStagedNow(btn){ await runWorkspaceBatch(btn); go("run"); }
 async function runWorkspaceBatch(btn){
-  if(btn)btn.disabled=true;
+  const __busy=btn?busyBtn(btn,"Solving MILP & matching payments..."):null;
   try{
     const ws=await refreshWorkspace(); let pays=ws?ws.all_payments:[];
     // One workspace, one payment set: a run always reconciles everything
@@ -90,9 +90,9 @@ async function runWorkspaceBatch(btn){
     // becomes a one-payment run that overwrites the case's results.
     if(!pays.length){ toast("Nothing staged to run - load a case or upload payments first"); return }
     const b=await api("/api/v1/batches",{method:"POST",body:JSON.stringify({idempotency_key:"ui-case-"+Date.now(),payments:pays})});
-    lastRun=b; casePayments=pays; seedPayments=pays; renderRun(b);
+    bumpGen(); lastRun=b; casePayments=pays; seedPayments=pays; renderRun(b);
     await refreshWorkspace(); renderGradeFromResults(b); refreshDash(); scheduleApprovalsJump(1200); toast("Run complete");
-  }catch(e){ toast("Run failed: "+e.message) }finally{ if(btn)btn.disabled=false }
+  }catch(e){ toast("Run failed: "+e.message) }finally{ if(__busy)__busy() }
 }
 
 /* ---------- Dashboard + runs ---------- */

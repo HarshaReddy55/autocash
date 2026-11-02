@@ -6,7 +6,12 @@ const money=c=>"$"+(c/100).toLocaleString("en-US",{minimumFractionDigits:2,maxim
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function sessionId(){let s=sessionStorage.getItem("autocash_session_id");if(!s){s=(crypto.randomUUID?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16)}));sessionStorage.setItem("autocash_session_id",s);}return s}
 function authHeaders(){const tn=localStorage.getItem("ac-tenant")||"";return {"Content-Type":"application/json","X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})}}
-async function api(path,opts={}){const r=await fetch(path,{headers:authHeaders(),...opts});if(!r.ok){throw new Error((await r.text()).slice(0,300))}return r.json()}
+let __apiN=0;
+async function api(path,opts={}){__apiN++;const lb=$("loadbar");if(lb)lb.classList.add("on");try{const r=await fetch(path,{headers:authHeaders(),...opts});if(!r.ok){throw new Error((await r.text()).slice(0,300))}return r.json()}finally{__apiN--;if(__apiN<=0){__apiN=0;const lb2=$("loadbar");if(lb2)setTimeout(()=>lb2.classList.remove("on"),250)}}}
+function bumpGen(){WS_GEN++}
+function busyBtn(btn,label){if(!btn)return()=>{};const old=btn.innerHTML;btn.disabled=true;btn.innerHTML=`<span class="spin"></span>${label}`;return()=>{btn.disabled=false;btn.innerHTML=old}}
+function flashEl(el){if(!el)return;el.scrollIntoView({behavior:"smooth",block:"center"});el.classList.remove("row-highlight-flash");void el.offsetWidth;el.classList.add("row-highlight-flash");setTimeout(()=>el.classList.remove("row-highlight-flash"),2100)}
+function jumpToApprovals(){go("run");let n=0,last="",stable=0;const t=setInterval(()=>{const out=$("appr-out");if(!out){if(++n>44)clearInterval(t);return}const html=out.innerHTML;if(html===last)stable++;else{stable=0;last=html}const r=[...out.querySelectorAll("tr")].find(x=>x.querySelector("button"));if(r&&stable>=2){clearInterval(t);flashEl(r)}else if(++n>44)clearInterval(t)},160)}
 function toggleActsMenu(ev){ ev.stopPropagation(); const m=$("acts-menu"); const open=m.classList.toggle("open");
   if(open){ const close=(e)=>{ if(!m.contains(e.target)){ m.classList.remove("open"); document.removeEventListener("click",close); } }; setTimeout(()=>document.addEventListener("click",close),0); } }
 async function downloadExport(path,fname){
@@ -21,37 +26,11 @@ async function downloadExport(path,fname){
 function toast(m){const t=$("toast");t.textContent=m;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),3400)}
 /* v23 tour: the six steps are the product. Older view names stay as
    aliases so every existing link, chip and command keeps working. */
-const VIEW_ALIAS={dash:"step1",cases:"step1",ledger:"step1",upload:"step1",policy:"gov",forecast:"score"};
-const VIEW_ANCHOR={cases:"step1-cases",ledger:"step1-ledger",upload:"step1-upload"};
+const VIEW_ALIAS={gov:"run"};
+const VIEW_ANCHOR={};
+const LOADED_GEN={};
 const REF_VIEWS=["eval","health","method","arch","product"];
-function go(s){const anchor=VIEW_ANCHOR[s];s=VIEW_ALIAS[s]||s;CURVIEW=s;BRIEF_OPEN=(s==="step1");applyBriefMode();document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("active",b.dataset.s===s));document.querySelectorAll("main section").forEach(x=>x.classList.toggle("active",x.id===s));const ab=document.querySelector(".navrow button.active");if(ab)ab.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"});if(REF_VIEWS.includes(s)){const g=$("ref-group");if(g)g.classList.remove("collapsed")}refreshWorkspace();if(LOADERS[s]){const p=LOADERS[s]();if(p&&p.then)p.then(()=>{fillInfo();initReveal()});else{fillInfo();initReveal()}}renderTour();if(anchor)setTimeout(()=>{const el=$(anchor);if(el)el.scrollIntoView({behavior:"smooth",block:"start"})},420)}
-function toggleRefGroup(){const g=$("ref-group");if(g)g.classList.toggle("collapsed")}
-/* ---------- the tour: stepper + next-step bar ---------- */
-const TOUR=[["step1","01","Case, Ledger & Capture"],["run","02","6-Agent & MILP Workbench"],["gov","03","Maker-Checker & Policy"],["sap","04","SAP BAPI & EBRR"],["mail","05","Outbound Mail Hub"],["score","06","CFO Scorecard & Forecast"]];
-function tourIdx(){return TOUR.findIndex(t=>t[0]===CURVIEW)}
-function renderTour(){
-  const st=$("stepper"); if(!st) return;
-  const idx=tourIdx(), hasCase=!!(WS&&WS.case), hasRun=!!(WS&&WS.latest_run);
-  st.innerHTML=TOUR.map((t,i)=>{
-    let cls="stepchip", done=(i<idx)||(i===0&&hasCase)||(i===1&&hasRun);
-    if(i===idx)cls+=" current"; else if(done)cls+=" done";
-    return `<button class="${cls}" onclick="go('${t[0]}')"><span class="sn">${done&&i!==idx?"&#10003;":t[1]}</span><span>${esc(t[2])}</span></button>`;
-  }).join("");
-  const bar=$("tourbar"); if(!bar) return;
-  if(idx<0||idx>=5){bar.className="tourbar hide";bar.innerHTML="";return}
-  bar.className="tourbar";
-  const sums={
-    step1:()=>WS&&WS.case?`Case in the workspace: ${WS.open_invoices} open invoices against ${WS.staged_payments} staged wires${WS.latest_run?", and the reconciliation has already run":""}.`:"No case loaded yet - pick the demo case or a use case pack above and the run happens on its own.",
-    run:()=>WS&&WS.latest_run?`Run ${esc(String(WS.latest_run.run_id).slice(0,13))}... is on screen with its flagship match already open: the derivation, the why-not proof and the agent timings.`:"Load a case in Step 1 and the run executes itself - its matches land here with the proof already open.",
-    gov:()=>WS?`Policy is live for this tenant, and ${WS.approvals_pending} match(es) are waiting for a signature.`:"",
-    sap:()=>"Every cleared payment in the latest run as a balanced SAP document - generated from the matches, never typed in.",
-    mail:()=>"Four streams of outbound mail generated from the run: claims, inquiries, settlement confirmations and dunning."
-  };
-  const nexts=["Continue to Step 2: 6-Agent & MILP Workbench","Continue to Step 3: Review & Sign Off","Continue to Step 4: SAP BAPI & EBRR","Continue to Step 5: Outbound Mail Hub","Continue to Step 6: CFO Scorecard & Forecast"];
-  let nl=nexts[idx];
-  if(idx===1&&WS) nl=`Continue to Step 3: Review & Sign Off ${WS.approvals_pending} Approval${WS.approvals_pending===1?"":"s"}`;
-  bar.innerHTML=`<span class="tsum">${sums[TOUR[idx][0]]()}</span><button class="btn tnext" onclick="go('${TOUR[idx+1][0]}')">${esc(nl)} &#8594;</button>`;
-}
+function go(s){s=VIEW_ALIAS[s]||s;CURVIEW=s;applyBriefMode();document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active",x.dataset.s===s));document.querySelectorAll("main section").forEach(x=>x.classList.toggle("active",x.id===s));const ab=document.querySelector(".navrow button.active");if(ab)ab.scrollIntoView({inline:"center",block:"nearest",behavior:"smooth"});window.scrollTo({top:0});refreshWorkspace();const gen=WS_GEN;if(LOADERS[s]&&LOADED_GEN[s]!==gen){const p=LOADERS[s]();const done=()=>{LOADED_GEN[s]=gen;fillInfo();initReveal()};if(p&&p.then)p.then(done);else done()}}
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>go(b.dataset.s));
 document.addEventListener("click",()=>setTimeout(()=>{fillInfo();initReveal()},60));
 function toggleHow(s){$("how-"+s).classList.toggle("open")}
@@ -85,7 +64,6 @@ function renderCasebar(){
   const sb=$("sb-case"); if(sb) sb.textContent="CASE "+(c?String(c.name).toUpperCase():"NONE");
   const sw=$("cb-switch"); if(sw&&c&&[...sw.options].some(o=>o.value===c.id)) sw.value=c.id;
   renderStaged(); renderUpStaged(); renderCaseBrief(); showHandoff(); if(window.renderLedgerStaged)renderLedgerStaged();
-  if(window.renderTour)renderTour();
 }
 let CASELIST=null;
 async function ensureCaseList(){
@@ -100,7 +78,7 @@ async function ensureCaseList(){
 }
 function switchCase(sel){
   const v=sel.value; if(!v) return;
-  if(v==="__builder"){ go("cases"); setTimeout(()=>{const p=[...document.querySelectorAll("#step1-cases .panel")].find(x=>x.innerText.includes("Custom Case Builder")); if(p)p.scrollIntoView({behavior:"smooth"})},450); }
+  if(v==="__builder"){ go("cases"); setTimeout(()=>{const p=[...document.querySelectorAll("#cases .panel")].find(x=>x.innerText.includes("Custom Case Builder")); if(p)p.scrollIntoView({behavior:"smooth"})},450); }
   else if(v==="__upload"){ go("upload"); }
   else loadCase(v);
 }
@@ -119,14 +97,14 @@ function goMailDisputes(){
   if(window.setHubCat) setHubCat("disputes");
   go("mail");
 }
-function openApprovals(){ go("gov"); }
+function openApprovals(){ go("run"); }
 let BRIEF_RUN=null, BRIEF_SEQ=0, BRIEF_PROMISE=null;
 /* Shutter brief: the Dashboard shows the full brief; every other view
    shows a minimized strip (verdict + the three outcome boxes) with a
    toggle that drops the full brief down when wanted. Switching views
    resets to that view's default. */
-let CURVIEW="step1", BRIEF_OPEN=null;
-function briefEffectiveOpen(){ return BRIEF_OPEN===null ? CURVIEW==="step1" : BRIEF_OPEN }
+let CURVIEW="dash", BRIEF_OPEN=null;
+function briefEffectiveOpen(){ try{const bp=sessionStorage.getItem("ac-brief"); if(bp!==null) return bp==="1"}catch(e){} return BRIEF_OPEN===null ? CURVIEW==="dash" : BRIEF_OPEN }
 function applyBriefMode(){
   const full=$("brief-full"), mini=$("brief-mini"), t=$("brief-toggle"), p=$("brief-panel");
   if(!full||!mini||!t) return;
@@ -135,7 +113,7 @@ function applyBriefMode(){
   t.textContent=open?"Minimize ▴":"Full brief ▾";
   if(p) p.classList.toggle("mini", !open);
 }
-function toggleBrief(){ BRIEF_OPEN=!briefEffectiveOpen(); applyBriefMode(); }
+function toggleBrief(){ BRIEF_OPEN=!briefEffectiveOpen(); try{sessionStorage.setItem("ac-brief",BRIEF_OPEN?"1":"0")}catch(e){} applyBriefMode(); }
 function fillBriefMini(){
   const m=$("brief-mini"); if(!m||!WS) return;
   const lr=WS.latest_run;
@@ -236,7 +214,7 @@ function renderUpStaged(){
   el.innerHTML=(p.length?stagedTable(p):"")+`<small>${WS.staged_payments} payments staged in the active case${WS.case?` (${esc(WS.case.name)})`:""}: ${p.length} pending, ${settled} already run.</small>`;
 }
 async function loadCase(cid,btn,opts={}){
-  if(btn)btn.disabled=true;
+  const __busy=busyBtn(btn,"Loading & running the case...");
   WS_GEN++;
   // The new case has no runs yet - clear every run-derived panel NOW,
   // synchronously, so no page can present the previous case's figures
@@ -255,7 +233,7 @@ async function loadCase(cid,btn,opts={}){
     toast(d.run?`Case loaded and run: ${d.run.auto_posted} of ${d.run.payments} payments auto-posted`:`Case loaded: ${d.workspace.case.name} - ${d.workspace.open_invoices} invoices, ${d.payments.length} payments staged`);
     if(d.workspace.case.policy_note) setTimeout(()=>toast(d.workspace.case.policy_note),600);
     if(!opts.stay){ if(d.run&&d.run.run_id){ openRun(d.run.run_id) } else { go("run") } } else { refreshDash() }
-  }catch(e){ toast("Load failed: "+e.message) }finally{ if(btn)btn.disabled=false }
+  }catch(e){ toast("Load failed: "+e.message) }finally{ __busy() }
 }
 async function loadCaseAndRun(cid,btn){
   await loadCase(cid,btn,{stay:true}); go("run"); setTimeout(()=>runLive($("live-btn")),450);
@@ -275,3 +253,5 @@ async function resetWorkspace(btn){
     await refreshDash(); loadApprovals(); renderSuggestions();
   }catch(e){ toast("Reset failed: "+e.message) }finally{ if(btn)btn.disabled=false }
 }
+
+document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;try{closeApprDrawer()}catch(_){} try{closeDocs()}catch(_){} try{closeCmdk()}catch(_){} const m=$("acts-menu");if(m)m.classList.remove("open")});

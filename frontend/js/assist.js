@@ -142,10 +142,10 @@ async function previewPolicy(btn){
   finally{ if(btn) btn.disabled=false }
 }
 async function savePolicy(btn){
-  btn.disabled=true;
+  const __busy=busyBtn(btn,"Saving policy & re-running the case...");
   try{ await previewPolicy(null);
     const d=await api("/api/v1/policy",{method:"PUT",body:JSON.stringify({policy:policyFormBody()})});
-    $("policy-src").textContent="Source: tenant (just saved)";
+    $("policy-src").textContent="Source: tenant (just saved)"; bumpGen();
     if(WS&&WS.case){
       toast("Policy saved - re-running the active case under it");
       await runWorkspaceBatch(null); go("run");
@@ -153,7 +153,7 @@ async function savePolicy(btn){
     } else {
       toast("Policy saved - the next batch run uses it (impact preview above)");
     }
-  }catch(e){toast("Save failed: "+e.message)}finally{btn.disabled=false}
+  }catch(e){toast("Save failed: "+e.message)}finally{__busy()}
 }
 
 async function loadMethod(){
@@ -196,19 +196,22 @@ async function cbRun(btn){
     toast("Custom case loaded into the workspace"); setTimeout(()=>go("run"),650);
   }catch(e){toast("Case failed: "+e.message)}finally{btn.disabled=false}
 }
-const LOADERS={step1:async()=>{await refreshDash();await loadCases();await loadLedger();loadAiStrip();wireAutoParse()},
-run:async()=>{await refreshWorkspace();if(WS&&WS.latest_run){const rid=WS.latest_run.run_id;const [m,x]=await Promise.all([api(`/api/v1/runs/${rid}/matches`),api(`/api/v1/runs/${rid}/exceptions`)]);renderStoredRun(rid,m,x)}await renderGradeFromStored();await loadApprovals()},
-gov:async()=>{await loadGov();await loadPolicy()},
+const LOADERS={dash:async()=>{await Promise.all([refreshDash(),loadScore()]);loadAiStrip()},
+cases:async()=>{await loadCases()},
+upload:async()=>{wireAutoParse()},
+run:async()=>{await refreshWorkspace();if(WS&&WS.latest_run){const rid=WS.latest_run.run_id;const [m,x]=await Promise.all([api(`/api/v1/runs/${rid}/matches`),api(`/api/v1/runs/${rid}/exceptions`)]);renderStoredRun(rid,m,x)}await renderGradeFromStored();await loadGov();await loadApprovals()},
+ledger:async()=>{await loadLedger()},
 sap:loadSap,mail:loadMailHub,
-score:async()=>{await loadScore();await loadForecast()},
+forecast:async()=>{await loadForecast()},
+policy:async()=>{await loadPolicy()},
 eval:loadEval,health:async()=>{await loadHealth();await loadAudit()},method:loadMethod,arch:loadDiag};
 async function runLive(btn){
-  btn.disabled=true; btn.textContent="Running...";
+  const __busy=busyBtn(btn,"Solving MILP & matching payments..."); const __t1=setTimeout(()=>{if(btn.disabled)btn.innerHTML='<span class="spin"></span>Generating SAP documents & mail...'},1800);
   const out=$("live-out");
   await refreshWorkspace();
   if(!WS||!WS.staged_payments){
     out.innerHTML=`<div class="verdict fail">Nothing staged to run. Load a case first - the demo case, a use case, the builder, or your uploaded payments - then run it here, live.</div>`;
-    btn.disabled=false; btn.textContent="Run the active case live"; return;
+    clearTimeout(__t1); __busy(); return;
   }
   // When every staged payment has already been run, the stream replays
   // the case's full batch (the backend's workspace fallback), so the
@@ -246,7 +249,7 @@ async function runLive(btn){
       }
     }
   }catch(err){out.innerHTML=`<div class="verdict fail">Live stream failed: ${esc(err.message)}. The stored-run path still works - use Run without streaming.</div>`}
-  btn.disabled=false; btn.textContent="Run the active case live";
+  clearTimeout(__t1); __busy();
   try{
     const ws2=await refreshWorkspace();
     if(ws2&&ws2.latest_run){
@@ -276,21 +279,29 @@ async function scheduleApprovalsJump(ms){
   __apprN=await loadApprovals();
 }
 async function decideMatch(id,decision,btn){
-  btn.disabled=true;
+  const cell=btn?(btn.closest("td")||btn.parentElement):null;
+  const prevCell=cell?cell.innerHTML:null;
+  if(cell) cell.innerHTML = decision==="approve" ? '<span class="posted-ok">Posting...</span>' : '<span style="opacity:.7">Working...</span>';
+  if(WS&&typeof WS.approvals_pending==="number"&&WS.approvals_pending>0){ WS.approvals_pending--; const c=$("cb-appr"); if(c)c.textContent=WS.approvals_pending; }
   try{const r=await api("/api/v1/matches/"+id+"/decision",{method:"POST",body:JSON.stringify({decision})});
-    BRIEF_RUN=null; BRIEF_PROMISE=null;
+    bumpGen(); BRIEF_RUN=null; BRIEF_PROMISE=null;
     let msg=(decision==="approve"?"Match approved and posted":"Match rejected");
     if(r.status==="PARKED_SUSPENSE") msg="Refusal accepted - wire parked in unapplied suspense. No document issued, nothing posted";
     if(decision==="approve"&&r.erp_document_id) msg+=` - ERP document ${r.erp_document_id}`;
     if(decision==="approve"&&(r.settled_invoices||[]).length) msg+=` - ${r.settled_invoices.length} invoice(s) settled and out of the forecast`;
     if(r.fingerprint) msg+=` - audit fingerprint ${r.fingerprint.slice(0,12)}...`;
+    if(cell){ if(r.status==="PARKED_SUSPENSE") cell.innerHTML='<span class="posted-ok">&#10003; Parked in suspense</span>';
+      else if(decision==="approve") cell.innerHTML='<span class="posted-ok">&#10003; Posted to SAP</span>';
+      else cell.innerHTML='<span style="opacity:.65">Rejected</span>'; }
     toast(msg);
-    loadApprovals(); if($("appr-drawer").classList.contains("on")) renderApprDrawer();
+    setTimeout(()=>{ loadApprovals(); if($("appr-drawer").classList.contains("on")) renderApprDrawer(); },1000);
     const w=await refreshWorkspace(); if(w) refreshDash();}
-  catch(e){toast("Decision failed: "+e.message); btn.disabled=false}
+  catch(e){ if(WS&&typeof WS.approvals_pending==="number"){ WS.approvals_pending++; const c=$("cb-appr"); if(c)c.textContent=WS.approvals_pending; }
+    if(cell&&prevCell!==null) cell.innerHTML=prevCell;
+    toast("Decision failed: "+e.message); if(btn)btn.disabled=false }
 }
 /* ---- v9: connectivity - drawer, run diff, handoffs, forecast disputes ---- */
-function openApprovals(){ go("gov"); }
+function openApprovals(){ go("run"); }
 /* v23 Step 3: the sign-off queue on the main canvas (the panel moved
    here from the Run view; loadApprovals renders into it unchanged),
    with a bulk action for everything the solver proved exactly. */
@@ -303,7 +314,7 @@ async function loadGov(){
   const gc=$("gov-count"); if(gc) gc.textContent=n?`- ${n} waiting${refusals?` (${refusals} refusal${refusals===1?"":"s"} - park or send back individually)`:""}`:"";
 }
 async function approveAllHeld(btn){
-  btn.disabled=true;
+  const __busy=busyBtn(btn,"Approving & posting held matches...");
   try{ const list=await api("/api/v1/approvals");
     const real=list.filter(a=>(a.invoices||[]).length); const refusals=list.length-real.length;
     let ok=0;
@@ -312,7 +323,7 @@ async function approveAllHeld(btn){
     toast(`Approved and posted ${ok} held match${ok===1?"":"es"} - SAP documents issued, invoices settled, settlement drafts generated${refusals?`. ${refusals} refusal${refusals===1?"":"s"} left in the queue - a refusal is never bulk-posted; park or send it back individually`:""}`);
     const w=await refreshWorkspace(); if(w) refreshDash();
   }catch(e){ toast("Bulk approval stopped partway: "+e.message) }
-  loadGov();
+  __busy(); loadGov();
 }
 async function openApprDrawer(){
   $("appr-drawer").classList.add("on"); $("drawer-scrim").classList.add("on");
@@ -578,7 +589,7 @@ function animateDashNums(){
 }
 setInterval(animateDashNums,700);
 
-const CMDK_VIEWS=[["step1","01","Step 1 - Case, Ledger & Capture"],["run","02","Step 2 - 6-Agent & MILP Workbench"],["gov","03","Step 3 - Maker-Checker & Policy"],["sap","04","Step 4 - SAP BAPI & EBRR"],["mail","05","Step 5 - Outbound Mail Hub"],["score","06","Step 6 - CFO Scorecard & Forecast"],["eval","R","Evaluations (reference)"],["health","R","Agent Health (reference)"],["method","R","Methodology (reference)"],["arch","R","Architecture (reference)"],["product","R","Product Thinking (reference)"]];
+const CMDK_VIEWS=[["dash","01","Dashboard"],["cases","02","Use Cases"],["upload","03","Upload Center"],["run","04","Run Reconciliation"],["sap","05","SAP BAPI & EBRR"],["mail","06","Outbound Mail Hub"],["ledger","07","Ledger"],["forecast","08","Forecast and Collections"],["policy","09","Policy Studio"],["eval","10","Evaluations"],["health","11","Agent Health"],["method","12","Methodology"],["arch","13","Architecture"],["product","14","Product Thinking"]];
 let cmdkSel=0, cmdkItems=[];
 function cmdkAll(){
   const views=CMDK_VIEWS.map(v=>({grp:"Go to",num:v[1],label:v[2],run:()=>go(v[0])}));
@@ -651,7 +662,8 @@ async function bootAuto(){
        were already on. Run the landing loader once the workspace
        settles, on every boot path (finally: the early returns above
        are the common case - a returning visitor with a case loaded). */
-    if(CURVIEW==="step1"&&typeof LOADERS!=="undefined"&&LOADERS.step1){ try{ await LOADERS.step1(); }catch(e){} }
+    if(CURVIEW==="dash"&&typeof LOADERS!=="undefined"&&LOADERS.dash){ try{ await LOADERS.dash(); }catch(e){} }
+    document.body.classList.remove("boot");
   }
 }
 refreshDash();

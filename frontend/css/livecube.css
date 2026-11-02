@@ -415,3 +415,21 @@ main{padding-bottom:78px}
 .editcell{cursor:pointer}
 .editcell:hover{outline:1px dashed var(--blue);outline-offset:-1px}
 .editcell input,.editcell textarea{background:var(--panel2);border:1px solid var(--blue);color:var(--text);font:inherit;padding:4px 6px}
+
+/* ---------- v29 smooth layer: skeletons, loadbar, spinners, row flash ---------- */
+#loadbar{position:fixed;top:0;left:0;height:2px;width:100%;z-index:2000;background:transparent;opacity:0;transition:opacity .3s;pointer-events:none}
+#loadbar.on{opacity:1}
+#loadbar.on::before{content:"";position:absolute;top:0;left:0;height:100%;width:35%;background:#3D75E8;animation:loadslide 1.1s ease-in-out infinite}
+@keyframes loadslide{0%{left:-35%}100%{left:100%}}
+.skeleton-line,.skeleton-card{display:block;border-radius:2px;background:linear-gradient(90deg,#232323 25%,#303030 50%,#232323 75%);background-size:200% 100%;animation:shim 1.15s infinite}
+.skeleton-line{height:12px;margin:9px 0}
+.skeleton-card{height:64px;margin:10px 0}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;vertical-align:-2px;margin-right:8px;animation:spinrot .7s linear infinite}
+@keyframes spinrot{to{transform:rotate(360deg)}}
+.row-highlight-flash{animation:rowflash 2s ease}
+@keyframes rowflash{0%,60%{box-shadow:inset 0 0 0 2px #3ecf8e;background:rgba(62,207,142,.10)}100%{box-shadow:inset 0 0 0 0 transparent;background:transparent}}
+.posted-ok{color:#3ecf8e;font-weight:600}
+.working{opacity:.55;pointer-events:none;transition:opacity .25s}
+body.boot .ribbon .v,body.boot .cards .v{color:transparent;background:linear-gradient(90deg,#232323 25%,#303030 50%,#232323 75%);background-size:200% 100%;animation:shim 1.15s infinite;border-radius:2px}
+#appr-out tr{transition:opacity .3s}
+@media (prefers-reduced-motion: reduce){.skl i,.skeleton-line,.skeleton-card,.spin,#loadbar.on::before,.row-highlight-flash{animation:none !important}}
