@@ -1,61 +1,116 @@
 # AutoCash - Implementation Guide
-For a customer finance + IT team piloting AutoCash. Estimated pilot effort:
-1 to 2 weeks part-time, dominated by data extraction, not software setup.
+AutoCash product pack, document 4 of 8. Previous: Architecture and
+System Design. Next: Deployment Guide.
+For a customer finance and IT team piloting AutoCash. Estimated pilot
+effort: one to two weeks part-time, dominated by data extraction, not
+software setup.
 
-## 1. Deploy
-Option A - Docker (recommended):
+## 1. Deploy the service
+Option A - Docker (recommended). One image contains the application, the
+Rust kernel and the OCR engine:
   docker build -t autocash .
   docker run -p 8080:8080 -v autocash-data:/app/data \
     -e AUTOCASH_BOOTSTRAP_KEY=<strong secret> \
-    -e GEMINI_API_KEY=<optional, enables AI parsing> autocash
-Option B - Cloud Run: use the included cloudbuild.yaml (service name and
-region are configurable there); set the same env vars as secrets.
-Option C - Local evaluation: Python 3.12 venv, pip install -r
-backend/requirements.txt, uvicorn api:app --app-dir backend/app.
+    -e GEMINI_API_KEY=<optional, enables AI parsing> \
+    -e GEMINI_MODEL=gemini-3.5-flash-lite autocash
+Option B - AWS ECS: the reference production deployment is documented
+step by step in the AWS Deployment Runbook (document 6 of this pack).
+Option C - Local evaluation: Python 3.12, a virtual environment,
+pip install -r backend/requirements.txt, then run
+uvicorn api:app --app-dir backend/app.
 
-## 2. First-run setup (15 minutes)
-1. POST /admin/tenants with the bootstrap key -> tenant_id.
-2. POST /admin/tenants/{id}/keys for each role (admin, approver, analyst,
-   viewer). Keys are shown once; store them in your secrets manager.
-3. PUT /api/v1/policy with your thresholds (automation threshold, tolerance
-   write-off limit, maker-checker value, dispute minimum recovery).
-4. Verify /health shows auth: api-key, and /ready is green.
+Two configuration points matter. First, set GEMINI_MODEL explicitly:
+if it is absent, the application falls back to a built-in default that
+may not suit your account, and the failure mode is a slow answer rather
+than a clear error. Second, decide the posture. With a bootstrap key
+set, the service is secured and every call needs a tenant API key.
+Without one, it runs in a demo-open posture that the health endpoint
+labels as such; use that only for demonstrations on synthetic data.
+
+## 2. First-run setup (about 15 minutes)
+1. Create the tenant: POST /admin/tenants with the bootstrap key.
+   The response carries the tenant_id.
+2. Issue keys: POST /admin/tenants/{tenant_id}/keys, one per role
+   (admin, approver, analyst, viewer). Each key is shown once. Store
+   them in your secrets manager; only their hashes are kept.
+3. Set policy: PUT /api/v1/policy with your thresholds: the automation
+   confidence threshold, the tolerance write-off ceiling, the
+   maker-checker value above which a second person must approve, and
+   the minimum expected recovery for an automatic dispute.
+4. Verify: GET /health should report the secured posture, and
+   GET /ready should be green.
 
 ## 3. Data onboarding
-- Open invoices: POST /api/v1/invoices/import with CSV text. Headers are
-  auto-mapped (common synonyms recognised); unmapped or malformed rows are
-  returned as quarantined errors with row numbers - nothing is silently
-  dropped. Every import carries a content fingerprint for audit.
-- Payments: submit via POST /api/v1/batches (API) - bank/lockbox file
-  adapters are configured per customer during the pilot.
-- Customer aliases: payer name variants are learned per tenant as analysts
-  confirm matches (alias table ships in the tenant database).
+- Open invoices: POST /api/v1/invoices/import with CSV text, or use the
+  Upload Center in the interface. Common column synonyms are recognised
+  automatically. Rows that cannot be mapped or validated are returned
+  as quarantined errors with row numbers; nothing is silently dropped.
+  Every import carries a content fingerprint for audit.
+- Payments: stage them through the Upload Center or the batch API
+  (POST /api/v1/batches). Bank and lockbox file adapters are configured
+  per customer during the pilot; they are not part of the standard
+  build, and this guide does not pretend otherwise.
+- Remittance files: PDF, PNG, JPG, plain text and email files can be
+  uploaded for extraction. The extracted fields are verified against
+  the open ledger before anything is staged.
+- Customer aliases: payer name variants are stored per tenant as
+  analysts confirm matches, and are applied to later runs.
 
-## 4. Go-live checklist
-- [ ] Policy thresholds signed off by AR manager (maker-checker value set)
-- [ ] Pilot scope: one subsidiary / one bank account, 2 weeks of payments
-- [ ] Baseline measured: current manual match rate and analyst hours
-- [ ] Exception queue ownership assigned (daily review cadence)
-- [ ] Gemini key configured OR deterministic mode accepted (product works
-      fully without it; AI parsing is an enhancement, never a dependency)
-- [ ] Success criteria agreed: touchless rate, residual dollars, exception
-      ageing - measured from AutoCash run records, exported for review
+## 4. How a pilot team works day to day
+Each reviewer works in their own browser-session workspace, so parallel
+review never collides. The rhythm is: load a case or the day's receipts
+(staging changes nothing), execute the run, work the approvals queue,
+review the SAP posting pack, and let the mail hub compose the dispute
+claims, inquiries and confirmations from the run. The forecast and
+collections views update from the residual ledger the run leaves
+behind. At any point, the audit and SAP bundle can be exported for
+review; the export is refused until a run exists, by design.
 
-## 5. Operations
-- Logs: structured JSON per request with request_id; ship to your aggregator.
-- Metrics: GET /metrics (Prometheus format). Alert on 5xx rate and p95
-  latency (latency counters are cumulative per path in v1).
-- Readiness: GET /ready checks control DB, data dir, model load.
-- Backups: back up the data directory (one SQLite file per tenant plus the
-  control DB). Restore = replace files and restart.
-- Rate limits: AUTOCASH_RATE_LIMIT_PER_MIN per API key (default 300).
-  In-memory in v1: exact for single-instance deployments.
+## 5. Go-live checklist
+- [ ] Policy thresholds signed off by the AR manager, maker-checker
+      value set deliberately, not left at the default
+- [ ] Pilot scope fixed: one subsidiary, one bank account, two weeks
+      of payments
+- [ ] Baseline measured before the pilot: current manual match rate
+      and analyst hours, so the result can be compared honestly
+- [ ] Approvals queue ownership assigned, with a daily review cadence
+- [ ] Gemini configured, or deterministic mode accepted in writing
+      (the product works fully without the AI; parsing quality, not
+      function, is what changes)
+- [ ] Mail posture understood: until SMTP is configured, sends are
+      recorded as recorded, not sent; connect the mailbox before any
+      live sending
+- [ ] Success criteria agreed in advance: touchless rate, residual
+      dollars, exception ageing, measured from AutoCash run records
+      and exported for review
 
-## 6. Security notes
+## 6. Operations
+- Logs: structured JSON per request, each with a request ID. Ship them
+  to your aggregator.
+- Metrics: GET /metrics in Prometheus format. Alert on the 5xx rate.
+- Readiness and diagnosis: GET /ready for the readiness check, and the
+  diagnostics endpoint (Agent Health screen) for dependency state,
+  including the Rust kernel equivalence probe and the current AI mode
+  and last AI error.
+- Backups: back up the data directory (one SQLite file per tenant, one
+  per workspace session, plus the control database). Restore means
+  replacing the files and restarting.
+- Rate limits: AUTOCASH_RATE_LIMIT_PER_MIN per API key, default 300.
+  The limiter is in-memory, which is exact for a single-instance
+  deployment; multi-instance limiting is part of the scaling design in
+  the Architecture document and is labelled there as design.
+- Updates: ship a new container image and update the service. Tenant
+  data on a persistent volume survives; on an ephemeral demonstration
+  host it resets, and the demo case reloads in one action.
+
+## 7. Security notes
 - API keys are SHA-256 hashed at rest; raw keys exist only at issuance.
-- Tenant isolation is physical (separate database file per tenant).
-- No payment data leaves the deployment except optional Gemini parsing
-  calls (disable by leaving GEMINI_API_KEY unset; parsing falls back to
-  the deterministic parser and flags degraded mode in its response).
-- Audit log per tenant records actor, action and before/after for policy
-  and run events.
+- Tenant isolation is physical: a separate database file per tenant.
+- No payment data leaves the deployment except the optional Gemini
+  parsing calls. Leave GEMINI_API_KEY unset and no external AI call is
+  made at all; parsing falls back to the deterministic parser and says
+  so in its response.
+- The audit log records actor, action and payload for approvals,
+  decisions, policy changes and sends, and decision entries carry a
+  content fingerprint that can be recomputed to prove they were not
+  altered.

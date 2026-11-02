@@ -4,18 +4,12 @@ from typing import List, Dict, Optional
 import time
 import numpy as np
 from scipy.optimize import milp, LinearConstraint, Bounds
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="HighRadius LiveCube Autonomous Cash App & MILP Engine")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# This module is the preserved original engine: pure functions and data
+# classes only. It once carried its own FastAPI app (a dead second web
+# service inside the library, never imported by the product); that app
+# was removed so the file is exactly what its tests exercise.
 
 
 @dataclass
@@ -159,12 +153,3 @@ class AutonomousCashAppAgent:
         }
 
 
-@app.post("/api/v1/reconcile")
-def reconcile_endpoint(req: ReconciliationRequest):
-    agent = AutonomousCashAppAgent()
-    records = [InvoiceRecord(**inv) for inv in req.invoices]
-    milp_result = agent.solve_milp_reconciliation(
-        req.wire_amount_cents, req.claimed_deduction_cents, records
-    )
-    dispute_result = agent.evaluate_deduction_anomaly_and_dispute(req)
-    return {"milp_reconciliation": milp_result, "dispute_intelligence": dispute_result}

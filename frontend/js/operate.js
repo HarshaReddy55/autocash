@@ -75,7 +75,7 @@ async function decorateExceptionActions(){
   try{ const list=await api("/api/v1/approvals");
     const byPid={}; list.forEach(a=>{ if(!(a.invoices||[]).length) byPid[a.payment_id]=a; });
     document.querySelectorAll(".exc-act").forEach(td=>{ const a=byPid[td.dataset.pid];
-      if(a){ const b=document.createElement("button"); b.className="btn small"; b.textContent="Park in Unapplied Suspense GL";
+      if(a&&!td.querySelector("button")){ const b=document.createElement("button"); b.className="btn small"; b.textContent="Park in Unapplied Suspense GL";
         b.onclick=ev=>decideMatch(a.match_id,"approve",ev.target); td.prepend(b, document.createTextNode(" ")); } });
   }catch(e){}
 }
@@ -154,7 +154,7 @@ async function refreshDash(){
     }
     else if((!WS||!WS.case)&&!runs.length){$("dash-out").innerHTML=`<div class="msg"><b>No case is loaded.</b> This workspace is empty on purpose - nothing is preloaded. Load the demo case, pick a use case, build one, or upload your own files, and every page will work on that same data. <button class="btn" style="margin-left:10px" onclick="loadCase('seed',this,{stay:true})">Load demo case</button></div>`}
     else if(!(WS&&WS.run_status==="staged")){$("dash-out").innerHTML=""}
-    $("runs-t").innerHTML=runs.length?`<table><tr><th>Run <span data-info="runid"></span></th><th>When (UTC) <span data-info="when"></span></th><th>Status <span data-info="runstatus"></span></th><th>Matches <span data-info="matchesn"></span></th><th>Auto-posted <span data-info="autopn"></span></th><th>Exceptions <span data-info="excn"></span></th></tr>${runs.map(r=>`<tr class="clickable" onclick="openRun('${r.run_id}')"><td><small>${esc(r.run_id)}</small></td><td><small>${esc((r.created_at||"").replace("T"," ").slice(0,19))}</small></td><td>${pill(r.status,"ok")}</td><td>${r.matches}</td><td>${r.auto_posted}</td><td>${r.exceptions}</td></tr>`).join("")}</table>`:"<small>No runs yet. Load a case or upload payments to create the first run.</small>";
+    $("runs-t").innerHTML=runs.length?`<table><tr><th>Run <span data-info="runid"></span></th><th>When (UTC) <span data-info="when"></span></th><th>Status <span data-info="runstatus"></span></th><th>Matches <span data-info="matchesn"></span></th><th>Auto-posted <span data-info="autopn"></span></th><th>Exceptions <span data-info="excn"></span></th></tr>${runs.map(r=>`<tr class="clickable" data-rid="${esc(r.run_id)}" onclick="openRun(this.dataset.rid)"><td><small>${esc(r.run_id)}</small></td><td><small>${esc((r.created_at||"").replace("T"," ").slice(0,19))}</small></td><td>${pill(r.status,"ok")}</td><td>${r.matches}</td><td>${r.auto_posted}</td><td>${r.exceptions}</td></tr>`).join("")}</table>`:"<small>No runs yet. Load a case or upload payments to create the first run.</small>";
   }catch(e){toast("Could not load dashboard: "+e.message)}
 }
 async function openRun(runId){
@@ -175,7 +175,7 @@ function renderStoredRun(runId,matches,exceptions){
     ?`<div class="msg"><span class="runfilter"><b>Filtered: exception and disputed rows</b> of run <b>${esc(runId)}</b> - ${shown.length} of ${matches.length} matches shown, ${exceptions.length} exceptions below. <button class="btn small ghost" onclick="clearRunFilter()">Clear filter</button></span></div>`
     :`<div class="msg">Run <b>${esc(runId)}</b> - ${matches.length} matches, ${exceptions.length} exceptions. Select a match for its evidence.</div>`;
   $("matches").innerHTML=shown.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Decision <span data-info="decision"></span></th><th>Solver <span data-info="solver"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Allocated cash <span data-info="netapp"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${shown.map(m=>{const i=matches.indexOf(m);const rr=m.result||{};return `<tr class="clickable" onclick="storedDetail(${i})"><td>${esc(m.payment_id)}</td><td>${pill(m.status,m.status==="AUTO_POSTED"?"ok":"warn")}</td><td>${esc(m.solver)}</td><td>${(rr.lines||[]).map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money((rr.lines||[]).reduce((a,l)=>a+l.net_cents,0))}</td><td>${money(m.residual_cents)}</td><td>${Number(m.confidence).toFixed(2)}</td></tr>`}).join("")}</table>`:"<small>No matches stored for this run.</small>";
-  $("exceptions").innerHTML=exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th><th>Actions</th></tr>${exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td><td class="exc-act" data-pid="${esc(e.payment_id)}" style="white-space:nowrap"><button class="btn small ghost" onclick="openChaseFor('${esc(e.payment_id)}')">Remittance inquiry</button> <button class="btn small ghost" onclick="go('ledger')">Manual split in Ledger</button></td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  $("exceptions").innerHTML=exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th><th>Actions</th></tr>${exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td><td class="exc-act" data-pid="${esc(e.payment_id)}" style="white-space:nowrap"><button class="btn small ghost" data-pid="${esc(e.payment_id)}" onclick="openChaseFor(this.dataset.pid)">Remittance inquiry</button> <button class="btn small ghost" onclick="go('ledger')">Manual split in Ledger</button></td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
   decorateExceptionActions();
   $("match-detail").innerHTML="";
   loadBrief(runId); renderDisputeDesk(matches, exceptions);
@@ -186,7 +186,7 @@ function renderStoredRun(runId,matches,exceptions){
 let specSeq=0;
 function spec(title,what,formula,impact){
   const id="spec"+(++specSeq);
-  return `<span class="specwrap"><button class="specbtn" title="How this is computed - hover to read, click to pin" onclick="toggleSpec('${id}',event)">i</button><span class="speccard" id="${id}"><span class="t">${esc(title)}</span><span class="lbl">What it is</span><p>${esc(what)}</p><span class="lbl">Mathematical formulation</span><p class="fx">${esc(formula)}</p><span class="lbl">Operational impact</span><p>${esc(impact)}</p></span></span>`;
+  return `<span class="specwrap"><button class="specbtn" title="How this is computed - hover to read, click to pin" data-sid="${esc(id)}" onclick="toggleSpec(this.dataset.sid,event)">i</button><span class="speccard" id="${id}"><span class="t">${esc(title)}</span><span class="lbl">What it is</span><p>${esc(what)}</p><span class="lbl">Mathematical formulation</span><p class="fx">${esc(formula)}</p><span class="lbl">Operational impact</span><p>${esc(impact)}</p></span></span>`;
 }
 function toggleSpec(id,ev){ev.stopPropagation();document.querySelectorAll(".speccard").forEach(c=>{if(c.id!==id)c.classList.remove("open")});document.getElementById(id).classList.toggle("open")}
 document.addEventListener("click",()=>document.querySelectorAll(".speccard").forEach(c=>c.classList.remove("open")));
@@ -370,7 +370,7 @@ function renderRun(b){
   RUN_FILTER=null;
   $("run-summary").innerHTML=`<div class="msg">Run <b>${esc(b.run_id)}</b> - ${b.payments} payments, <b>${b.auto_posted} auto-posted</b>, touchless ${(b.touchless_rate*100).toFixed(1)}%. Select a match for lines and counterfactuals.</div>`;
   $("matches").innerHTML=`<table><tr><th>Payment <span data-info="payid"></span></th><th>Status <span data-info="matchstatus"></span></th><th>Matched by <span data-info="rung"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Allocated cash <span data-info="netapp"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${b.results.map((r,i)=>`<tr class="clickable" onclick="liveDetail(${i})"><td>${esc(r.payment_id)}</td><td>${statusPill(r.status)}</td><td>${pill(esc(r.matched_by||"-"),"info")}</td><td>${r.lines.map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money(r.lines.reduce((a,l)=>a+l.net_cents,0))}</td><td>${money(r.residual_cents)}</td><td><div class="confbar"><i style="width:${Math.round(r.confidence*100)}%"></i></div><small>${Number(r.confidence).toFixed(2)}</small></td></tr>`).join("")}</table>`;
-  $("exceptions").innerHTML=b.exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th><th>Actions</th></tr>${b.exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td><td class="exc-act" data-pid="${esc(e.payment_id)}" style="white-space:nowrap"><button class="btn small ghost" onclick="openChaseFor('${esc(e.payment_id)}')">Remittance inquiry</button> <button class="btn small ghost" onclick="go('ledger')">Manual split in Ledger</button></td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
+  $("exceptions").innerHTML=b.exceptions.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Kind <span data-info="exckind"></span></th><th>Severity <span data-info="sev"></span></th><th>Recommended action <span data-info="excact"></span></th><th>Actions</th></tr>${b.exceptions.map(e=>`<tr><td>${esc(e.payment_id)}</td><td>${pill(e.kind,"warn")}</td><td>${esc(e.severity)}</td><td>${esc(e.recommended_action)}</td><td class="exc-act" data-pid="${esc(e.payment_id)}" style="white-space:nowrap"><button class="btn small ghost" data-pid="${esc(e.payment_id)}" onclick="openChaseFor(this.dataset.pid)">Remittance inquiry</button> <button class="btn small ghost" onclick="go('ledger')">Manual split in Ledger</button></td></tr>`).join("")}</table>`:"<small>No exceptions. Clean run.</small>";
   decorateExceptionActions();
   $("match-detail").innerHTML="";
   fillInfo();
@@ -459,11 +459,11 @@ function detailExtras(r,pay){
   const rej=((r.reasoning||{}).rejections||[]).filter(x=>x.invoice_id);
   let why="";
   if(rej.length&&pay){
-    why=`<div class="detail"><b>Counterfactual - why these invoices were not picked.</b> Each button re-runs the solver with that invoice forced into the set and reports the exact cost of forcing it.<br><br>${rej.map(x=>`<button class="btn ghost small" onclick="whyNotDirect('${esc(r.payment_id)}','${esc(x.invoice_id)}',this)">Why not ${esc(x.invoice_id)} (${money(x.amount_cents)})?</button>`).join(" ")}</div><div id="why-out"></div>`;
+    why=`<div class="detail"><b>Counterfactual - why these invoices were not picked.</b> Each button re-runs the solver with that invoice forced into the set and reports the exact cost of forcing it.<br><br>${rej.map(x=>`<button class="btn ghost small" data-pid="${esc(r.payment_id)}" data-iid="${esc(x.invoice_id)}" onclick="whyNotDirect(this.dataset.pid,this.dataset.iid,this)">Why not ${esc(x.invoice_id)} (${money(x.amount_cents)})?</button>`).join(" ")}</div><div id="why-out"></div>`;
   } else if(rej.length){
     why=`<div class="detail"><b>Why the other invoices were not picked</b> - from this match's recorded reasoning:<br>${rej.map(x=>"• "+esc(x.text)).join("<br>")}</div>`;
   } else if(pay){
-    why=`<p><button class="btn ghost small" onclick="whyNot('${esc(r.payment_id)}',this)">Why was another invoice not picked? (counterfactual)</button> <span id="why-slot"></span></p><div id="why-out"></div>`;
+    why=`<p><button class="btn ghost small" data-pid="${esc(r.payment_id)}" onclick="whyNot(this.dataset.pid,this)">Why was another invoice not picked? (counterfactual)</button> <span id="why-slot"></span></p><div id="why-out"></div>`;
   }
   return why+erpDrawer(r);
 }
@@ -483,7 +483,7 @@ let ERP_RES={};
 function erpDrawer(r){
   const lines=r.lines||[]; if(!lines.length) return "";
   ERP_RES[r.payment_id]=r;
-  return `<p><button class="btn ghost small" onclick="erpToggle(this,'${esc(r.payment_id)}')">ERP posting document (SAP S/4HANA style, built by erp_sap.py)</button></p><div hidden class="erpbody"><div class="detail"><small>Loading the posting document from the server...</small></div></div>`;
+  return `<p><button class="btn ghost small" data-pid="${esc(r.payment_id)}" onclick="erpToggle(this,this.dataset.pid)">ERP posting document (SAP S/4HANA style, built by erp_sap.py)</button></p><div hidden class="erpbody"><div class="detail"><small>Loading the posting document from the server...</small></div></div>`;
 }
 async function erpToggle(btn,pid){
   const box=btn.parentElement.nextElementSibling;
@@ -499,7 +499,7 @@ function erpServerHtml(d){
   let rev="";
   if(d.revrec_accrual){ const a=d.revrec_accrual;
     rev=`<p style="margin-top:10px"><b>Revenue recognition (ASC 606 / IFRS 15, event-based):</b> ${esc(a.note)}</p><table><tr><th>GL</th><th>Account</th><th>Debit</th><th>Credit</th></tr>${a.journal.map(l=>`<tr><td>${l.gl_account}</td><td>${esc(l.account)}</td><td>${l.debit_cents?money(l.debit_cents):""}</td><td>${l.credit_cents?money(l.credit_cents):""}</td></tr>`).join("")}</table>`; }
-  return `<div class="detail"><b>${doc.status==="posted_reference"?`ERP document ${esc(doc.document_number||"")}`:"Posting preview - not a posting."}</b> Document type DZ (customer payment), generated on the server by <span class="mono">erp_sap.py</span> from this match's own derivation, so every amount is this payment's real money.<table><tr><th>GL</th><th>Account</th><th>Debit</th><th>Credit</th></tr>${rows}<tr><td></td><td><b>Totals</b></td><td><b>${money(doc.total_debits_cents)}</b></td><td><b>${money(doc.total_credits_cents)}</b></td></tr></table>${doc.balanced?pill("debits equal credits","ok"):pill("does not balance","bad")}<p style="margin-top:8px"><small>${esc(doc.note)}</small></p>${rev}<p><button class="btn ghost small" onclick="const p=this.nextElementSibling;p.hidden=!p.hidden">BAPI_ACC_DOCUMENT_POST payload</button><pre class="jsonbox" hidden>${esc(JSON.stringify(doc.bapi_payload,null,2))}</pre></p></div>`;
+  return `<div class="detail"><b>${doc.document_number?`ERP document ${esc(doc.document_number)} - staged for SAP posting; nothing has been posted to an ERP.`:"Posting preview - not a posting."}</b> Document type DZ (customer payment), generated on the server by <span class="mono">erp_sap.py</span> from this match's own derivation, so every amount is this payment's real money.<table><tr><th>GL</th><th>Account</th><th>Debit</th><th>Credit</th></tr>${rows}<tr><td></td><td><b>Totals</b></td><td><b>${money(doc.total_debits_cents)}</b></td><td><b>${money(doc.total_credits_cents)}</b></td></tr></table>${doc.balanced?pill("debits equal credits","ok"):pill("does not balance","bad")}<p style="margin-top:8px"><small>${esc(doc.note)}</small></p>${rev}<p><button class="btn ghost small" onclick="const p=this.nextElementSibling;p.hidden=!p.hidden">BAPI_ACC_DOCUMENT_POST payload</button><pre class="jsonbox" hidden>${esc(JSON.stringify(doc.bapi_payload,null,2))}</pre></p></div>`;
 }
 function erpClientHtml(r){
   const lines=r.lines||[]; if(!lines.length) return "";
@@ -509,9 +509,9 @@ function erpClientHtml(r){
   const rows=[["113100","Cash - operating account",payAmt,0]];
   if(disc)rows.push(["415000","Sales discounts allowed",disc,0]);
   if(dedA)rows.push(["529000","Deductions accepted (within policy)",dedA,0]);
-  if(resid<0)rows.push(["119900","Unapplied cash suspense",-resid,0]);
+  if(resid<0)rows.push(["121600","Residual receivable - part-paid invoices",-resid,0]);
   rows.push(["121000","Trade receivables - customer control",0,gross]);
-  if(resid>0)rows.push(["119900","Unapplied cash suspense",0,resid]);
+  if(resid>0)rows.push(["121900","Unapplied cash - customer on-account",0,resid]);
   const dr=rows.reduce((a,x)=>a+x[2],0), cr=rows.reduce((a,x)=>a+x[3],0);
   const ded=r.deduction, dispute=ded&&ded.autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM";
   const ap=r.approval||{};
@@ -620,7 +620,7 @@ async function importPayments(btn){
 /* ---------- Use cases ---------- */
 async function loadCases(){
   try{const list=await api("/api/v1/scenarios");
-    $("case-grid").innerHTML=list.map(s=>`<div class="panel scen"><h3>${esc(s.title)} <span data-info="casecard"></span></h3><div style="margin:2px 0 8px">${pill(`${s.invoices} invoices`,"info")} ${pill(`${s.payments} payments`,"info")} ${pill(`${s.customers} customers`,"info")} ${pill(`${money(s.open_cents)} open AR`,"grey")} ${pill(`${money(s.batch_cents)} batch`,"grey")}</div><div class="story">${esc(s.story)}</div><div class="shows"><b>What it proves:</b> ${esc(s.shows)}</div><p style="margin:8px 0 0"><button class="btn small" onclick="loadCase('${s.id}',this)">Stage Case (Inspect Before Run)</button> <button class="btn small ghost" onclick="loadCaseAndRun('${s.id}',this)">Stage &amp; Run Now</button></p></div>`).join("");
+    $("case-grid").innerHTML=list.map(s=>`<div class="panel scen"><h3>${esc(s.title)} <span data-info="casecard"></span></h3><div style="margin:2px 0 8px">${pill(`${s.invoices} invoices`,"info")} ${pill(`${s.payments} payments`,"info")} ${pill(`${s.customers} customers`,"info")} ${pill(`${money(s.open_cents)} open AR`,"grey")} ${pill(`${money(s.batch_cents)} batch`,"grey")}</div><div class="story">${esc(s.story)}</div><div class="shows"><b>What it proves:</b> ${esc(s.shows)}</div><p style="margin:8px 0 0"><button class="btn small" data-cid="${esc(s.id)}" onclick="loadCase(this.dataset.cid,this)">Stage Case (Inspect Before Run)</button> <button class="btn small ghost" data-cid="${esc(s.id)}" onclick="loadCaseAndRun(this.dataset.cid,this)">Stage &amp; Run Now</button></p></div>`).join("");
   }catch(e){$("case-grid").innerHTML="<small>Could not load use cases.</small>"}
 }
 async function runCase(sid,btn){

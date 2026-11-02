@@ -1,82 +1,90 @@
-# AutoCash - Deployment Runbook (Google Cloud Run)
+# AutoCash - Deployment Guide
+AutoCash product pack, document 5 of 8. Previous: Implementation Guide.
+Next: AWS Deployment Runbook.
+This guide describes the deployment model that applies on any host.
+The step-by-step runbook for the live reference deployment (AWS ECS
+Express Mode) is document 6 of this pack.
 
-## What you need
-- A Google Cloud project with billing enabled. (StartupMatrix already runs
-  on Cloud Run in this account's ecosystem, so a working project exists;
-  its project number appears in the StartupMatrix run.app URL.)
-- This source bundle (autocash-source.zip) or the repo at ~/workspace/autocash.
+## 1. The unit of deployment
+One container image, built from the repository Dockerfile in two
+stages: the Rust kernel is compiled first, then placed into the Python
+application image together with the Tesseract OCR engine. The image
+serves the API and the frontend from one process on port 8080. The
+full automated test suite (133 tests, plus the Rust kernel tests) runs
+in continuous integration and gates the image build: a failing suite
+means no image is produced.
 
-## Route A - Cloud Shell (recommended, nothing to install)
-1. Sign in to console.cloud.google.com with the account that owns the
-   project. Select the project.
-2. Open Cloud Shell (top-right terminal icon).
-3. Upload autocash-source.zip via the Cloud Shell "Upload file" menu, then:
-     unzip autocash-source.zip && cd autocash
-4. Run:  PROJECT_ID=<your-project-id> ./deploy.sh
-   The script enables APIs, creates the two secrets (prompting you for
-   values - the bootstrap key is one you invent; the Gemini key is
-   optional), grants secret access, builds with Cloud Build and deploys.
-5. The script prints the service URL. Open it and check /ready shows
-   "ready": true.
+## 2. Configuration
+All configuration is by environment variable. Nothing is configured in
+code, and no secret is stored in the repository.
 
-## Route B - Local gcloud
-Install gcloud, run `gcloud auth login` (you complete the sign-in in your
-browser), then the same ./deploy.sh command.
+- AUTOCASH_DATA_DIR: where tenant and workspace databases live. Point
+  it at a persistent volume for any deployment whose data must survive.
+- AUTOCASH_BOOTSTRAP_KEY: set it for secured mode (tenant API keys are
+  then enforced). Leave it unset only for a demonstration on synthetic
+  data; the health endpoint labels that posture as demo-open.
+- GEMINI_API_KEY: optional. Without it, no external AI call is made
+  and parsing runs on the deterministic parser, labelled as such.
+- GEMINI_MODEL: set this explicitly whenever a Gemini key is used. If
+  it is absent, the application uses a built-in default model, which
+  may be a slower model than your account should use; the failure mode
+  is a request that hangs until a timeout instead of a clear error.
+  The reference deployment uses gemini-3.5-flash-lite, a low-latency
+  model, because the hosting platform ends any request at about sixty
+  seconds and the product's own AI timeout is set below that ceiling
+  so a slow AI answer always degrades gracefully instead of failing
+  the page.
+- AUTOCASH_RATE_LIMIT_PER_MIN: per-key request limit, default 300.
+- Thread limits (OMP_NUM_THREADS and peers): set to 1 on small tasks
+  so the numerical libraries do not oversubscribe a fractional CPU.
 
-## First tenant (after deploy)
-  curl -X POST <URL>/admin/tenants -H "X-API-Key: <bootstrap key>" \
-       -H "Content-Type: application/json" -d '{"name":"Demo"}'
-  curl -X POST <URL>/admin/tenants/<tenant_id>/keys \
-       -H "X-API-Key: <bootstrap key>" -H "Content-Type: application/json" \
-       -d '{"role":"admin","label":"founder"}'
-Use the returned admin key in the UI/API from then on.
+## 3. Data and what resets
+Tenant and workspace state lives in SQLite files under
+AUTOCASH_DATA_DIR. On a host with an ephemeral filesystem (the
+demonstration deployment is one), that data resets when the task is
+replaced or the service is redeployed. This is accepted for the
+demonstration and stated openly: the demo case reloads in one action
+and the full demonstration is reproducible in under a minute. For a
+paying pilot, the same image runs with the data directory on a
+persistent volume, or the tenant databases move to a managed Postgres;
+that migration is the first paid-pilot engineering task and is named
+as such in the Implementation Guide.
 
-## Notes and limits
-- Cloud Run is authenticated-by-default in this config only at the platform
-  layer if you keep --no-allow-unauthenticated; the included cloudbuild.yaml
-  deploys private. For a public demo link, redeploy with
-  --allow-unauthenticated and rely on AutoCash API keys (the app enforces
-  them once keys exist). For the referral demo, public URL + app keys is
-  the pragmatic choice; say explicitly which posture you picked.
-- Data: Cloud Run's filesystem is ephemeral. Tenant SQLite files live in
-  /app/data inside the container and reset on redeploy. For a demo this is
-  fine (re-seed in one click). For a paying pilot, mount Cloud Storage via
-  gcsfuse or move to Cloud SQL - that migration is the first paid-pilot
-  engineering task and is named as such in the implementation guide.
-- Cost: Cloud Run scales to zero; a demo workload sits in the free tier in
-  practice, but billing must be enabled on the project.
+## 4. Shipping an update
+1. Commit and push through GitHub Desktop. The repository is copied,
+   never surgically edited on the server.
+2. Continuous integration runs the test suite, then builds and pushes
+   the image.
+3. Update the service on the host (on ECS, one Update service action).
+4. Verify what is actually served, not what was intended: the page's
+   asset URLs carry version stamps, and a changed stamp proves the new
+   build is live. If a browser still shows the old version afterwards,
+   it is the browser cache; a private window settles the question.
 
-## Other Docker hosts (checked 31 Oct 2026, sources in research notes)
-- Render (free, no card): render.yaml in this repo is a one-click Blueprint.
-  512 MB RAM, spins down after 15 min idle, ephemeral disk. Best zero-cost
-  demo link; memory is tight for the ML stack - if the service OOMs at
-  startup, that is the known risk and Cloud Run with 1 GB is the fallback.
-- Railway: $5 trial credit for 30 days, then a free plan with $1 monthly
-  credit, no card for the trial. Deploys the Dockerfile directly.
-- Fly.io: no free tier (short trial, card required); smallest always-on
-  machine is a few dollars a month; fly.toml included, 1 GB RAM specified.
-- SnapDeploy: free tier, no card, builds from a Dockerfile or tarball,
-  sleeps after 15 min. Smaller, newer vendor - fine for a demo, not yet a
-  production recommendation.
-- VPS + Docker (e.g. Hetzner): a few dollars a month, full control, and the
-  only cheap option with a persistent disk (tenant SQLite data survives).
-  You operate the server yourself.
-- Koyeb: free instance exists but sign-up now requires a card with a $29
-  pre-authorisation hold - not recommended for a quick demo.
+## 5. Routes evaluated for the reference deployment
+The reference deployment had one hard constraint: zero out-of-pocket
+cost, no card and no prepayment. The routes below were checked against
+it in Oct and Nov 2026.
 
-## Free-tier Google account (no subscription) - does it work?
-Yes. Cloud Run needs no subscription or AI plan. The one requirement is a
-project with billing enabled. A brand-new Google Cloud account normally
-carries a free trial (credit for 90 days; Google asks for a card purely to
-verify identity and does not charge unless you explicitly upgrade to a paid
-billing account). Cloud Run also has an always-free monthly allowance
-(requests, CPU and memory seconds) that a demo workload sits far inside, so
-the referral demo costs nothing in practice. Cold start after idle is a few
-seconds; for a zero-cold-start demo you can set minimum instances to 1,
-which consumes the free CPU allowance faster - leave it at 0 for the demo.
+- Google Cloud Run: technically straightforward, and a runbook existed
+  for it. Rejected: enabling it required a billing prepayment the
+  project would not make. Cost discipline outranked convenience.
+- Railway, Hugging Face Spaces, Render (free tier): each fell short on
+  at least one of always-on availability, memory for the ML stack, or
+  a filesystem story for the tenant databases.
+- AWS ECS Express Mode: chosen. It runs on account credits (about
+  $28 per month at the reference sizing of 0.25 vCPU and 1 GB, with
+  autoscaling capped at 3 tasks as a credit guard), provides HTTPS
+  and a public URL from one image, and needs no prepayment. The full
+  runbook is document 6.
 
-## Demo posture (important)
-Deploy with DEMO=1 for the link you share: the service is public and opens
-straight into the demo workspace (synthetic data only). Do not put real
-customer data behind a DEMO deployment - the secured mode (default) exists
-for that, with a bootstrap key and per-tenant API keys.
+For a customer deployment, the constraint changes and so may the
+answer: the image is host-agnostic, and any Docker host with a
+persistent volume is a valid target.
+
+## 6. Demo posture, stated plainly
+The shared demonstration link runs demo-open on synthetic data, with
+per-session workspaces so visitors do not disturb each other. No real
+customer data should ever be placed behind a demo-open deployment.
+The secured mode exists in the same build and is the only posture for
+a pilot.

@@ -15,8 +15,18 @@ import numpy as np
 from ml import predict_delay
 
 
+def _terms_days(inv):
+    """The invoice's own payment terms, derived from its dates: it was
+    issued age_days ago and falls due in due_in_days, so the contractual
+    window between issue and due is the sum. Clamped to the delay
+    model's training support (15 to 60 days) so an unusual upload
+    cannot push the model outside the range it was validated on."""
+    return max(15, min(60, (inv.age_days or 0) + (inv.due_in_days or 0)))
+
+
 def _delay(delay_model, inv, current_month):
-    return float(predict_delay(delay_model, inv.customer, 30, inv.gross_cents, current_month))
+    return float(predict_delay(delay_model, inv.customer, _terms_days(inv),
+                               inv.gross_cents, current_month))
 
 
 def forecast_cash_in(open_invoices, delay_model, horizon_days=56, residual_std=3.5,

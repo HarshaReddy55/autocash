@@ -105,7 +105,7 @@ async function renderSuggestions(){
     }
     qs.push("Which solver is more accurate?");
   }catch(e){ qs.push("What is in this workspace?","Which solver is more accurate?"); }
-  box.innerHTML=qs.slice(0,5).map(q=>`<button onclick="askQ('${q.replace(/'/g,"")}')">${esc(q)}</button>`).join("");
+  box.innerHTML=qs.slice(0,5).map(q=>`<button data-q="${esc(q)}" onclick="askQ(this.dataset.q)">${esc(q)}</button>`).join("");
 }
 const POLICY_FIELDS=[
  ["name","Policy name","A label for this behaviour profile. Tenants can run several (for example a stricter month-end profile).","text"],
@@ -268,7 +268,7 @@ async function loadApprovals(){
     const badge=$("appr-count");
     if(badge){badge.style.display=list.length?"":"none"; badge.textContent=list.length+" waiting"}
     __apprN=list.length;
-    out.innerHTML=list.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Amount <span data-info="amt"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Conf. <span data-info="conf"></span></th><th>Why it is held <span data-info="held"></span></th><th>Decision <span data-info="apprdec"></span></th></tr>${list.map(a=>{const refusal=!(a.invoices||[]).length;return `<tr><td>${esc(a.payment_id)}<br><small>${esc(a.run_id)}</small></td><td>${a.amount_cents==null?"-":money(a.amount_cents)}</td><td>${refusal?pill("Refusal - no invoices matched","warn"):a.invoices.map(esc).join(", ")}</td><td>${Number(a.confidence).toFixed(2)}</td><td style="max-width:340px">${esc(a.decision_reason||"Held for review")}</td><td style="white-space:nowrap">${refusal?`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Park in suspense GL</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Send back</button>`:`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button>`}</td></tr>`}).join("")}</table>${list.some(a=>!(a.invoices||[]).length)?`<small>A refusal is the solver's verdict that nothing in the ledger explains the wire. It can never be posted - there is no document behind it. Park it in unapplied suspense (the remittance chase is already drafted in the Mail Hub) or send it back for manual allocation.</small>`:""}`:"<small>Nothing waiting. Matches appear here when policy holds one - lower the maker-checker threshold in Policy Studio and run a batch to see it work.</small>";
+    out.innerHTML=list.length?`<table><tr><th>Payment <span data-info="payid"></span></th><th>Amount <span data-info="amt"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Conf. <span data-info="conf"></span></th><th>Why it is held <span data-info="held"></span></th><th>Decision <span data-info="apprdec"></span></th></tr>${list.map(a=>{const refusal=!(a.invoices||[]).length;return `<tr><td>${esc(a.payment_id)}<br><small>${esc(a.run_id)}</small></td><td>${a.amount_cents==null?"-":money(a.amount_cents)}</td><td>${refusal?pill("Refusal - no invoices matched","warn"):a.invoices.map(esc).join(", ")}</td><td>${Number(a.confidence).toFixed(2)}</td><td style="max-width:340px">${esc(a.decision_reason||"Held for review")}</td><td style="white-space:nowrap">${refusal?`<button class="btn small" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'approve',this)">Park in suspense GL</button> <button class="btn small ghost" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'reject',this)">Send back</button>`:`<button class="btn small" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'approve',this)">Approve and post</button> <button class="btn small ghost" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'reject',this)">Reject</button>`}</td></tr>`}).join("")}</table>${list.some(a=>!(a.invoices||[]).length)?`<small>A refusal is the solver's verdict that nothing in the ledger explains the wire. It can never be posted - there is no document behind it. Park it in unapplied suspense (the remittance chase is already drafted in the Mail Hub) or send it back for manual allocation.</small>`:""}`:"<small>Nothing waiting. Matches appear here when policy holds one - lower the maker-checker threshold in Policy Studio and run a batch to see it work.</small>";
   }catch(e){out.innerHTML=`<small>Could not load approvals: ${esc(e.message)}</small>`}
   return __apprN;
 }
@@ -333,7 +333,7 @@ function closeApprDrawer(){ $("appr-drawer").classList.remove("on"); $("drawer-s
 async function renderApprDrawer(){
   const el=$("drawer-list"); if(!el) return;
   try{ const list=await api("/api/v1/approvals");
-    el.innerHTML=list.length?list.map(a=>{const refusal=!(a.invoices||[]).length;return `<div class="deskcard"><b>${esc(a.payment_id)}</b> - ${a.amount_cents==null?"-":money(a.amount_cents)} - ${refusal?"refusal: no invoices matched":"invoices "+a.invoices.map(esc).join(", ")}<br><small>${esc(a.decision_reason||"Held for review")}</small><div style="margin-top:8px">${refusal?`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Park in suspense GL</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Send back</button>`:`<button class="btn small" onclick="decideMatch('${a.match_id}','approve',this)">Approve and post</button> <button class="btn small ghost" onclick="decideMatch('${a.match_id}','reject',this)">Reject</button>`}</div></div>`}).join(""):"<small>Nothing waiting. When policy holds a match it appears here, on every page.</small>";
+    el.innerHTML=list.length?list.map(a=>{const refusal=!(a.invoices||[]).length;return `<div class="deskcard"><b>${esc(a.payment_id)}</b> - ${a.amount_cents==null?"-":money(a.amount_cents)} - ${refusal?"refusal: no invoices matched":"invoices "+a.invoices.map(esc).join(", ")}<br><small>${esc(a.decision_reason||"Held for review")}</small><div style="margin-top:8px">${refusal?`<button class="btn small" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'approve',this)">Park in suspense GL</button> <button class="btn small ghost" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'reject',this)">Send back</button>`:`<button class="btn small" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'approve',this)">Approve and post</button> <button class="btn small ghost" data-mid="${esc(a.match_id)}" onclick="decideMatch(this.dataset.mid,'reject',this)">Reject</button>`}</div></div>`}).join(""):"<small>Nothing waiting. When policy holds a match it appears here, on every page.</small>";
   }catch(e){ el.innerHTML=`<small>Could not load approvals: ${esc(e.message)}</small>` }
 }
 let DIFFSEL={cur:null,prev:null};
@@ -392,7 +392,7 @@ async function renderFcDisputes(){
       .sort((a,b)=>Number(b.d.expected_recovery_value_usd||0)-Number(a.d.expected_recovery_value_usd||0));
     if(!claims.length){ el.innerHTML=""; return }
     el.innerHTML=`<div class="panel"><h3>Dispute priority - from the active run</h3><div class="d">The Deduction Agent flagged these short-pays during reconciliation. They sit at the top of the collections work because the money is recoverable: expected recovery is win probability x claim, minus the cost of fighting. One click takes you to the claim on the Dispute desk, draft ready.</div>
-    <table><tr><th>Payment</th><th>Payer</th><th>Claim</th><th>Reason</th><th>Win probability</th><th>Expected recovery</th><th></th></tr>${claims.map(({m,d})=>`<tr><td>${esc(m.payment_id)}</td><td>${esc(d.payer||"")}</td><td>${money(d.claimed_cents||0)}</td><td>${esc(d.assigned_erp_reason_code||"")} - ${esc((d.classification||{}).label||"deduction")}</td><td>${d.win_probability}</td><td><b>$${Number(d.expected_recovery_value_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b></td><td><button class="btn small" onclick="dispatchClaim('${esc(m.payment_id)}')">Dispatch dispute email &rarr;</button></td></tr>`).join("")}</table></div>`;
+    <table><tr><th>Payment</th><th>Payer</th><th>Claim</th><th>Reason</th><th>Win probability</th><th>Expected recovery</th><th></th></tr>${claims.map(({m,d})=>`<tr><td>${esc(m.payment_id)}</td><td>${esc(d.payer||"")}</td><td>${money(d.claimed_cents||0)}</td><td>${esc(d.assigned_erp_reason_code||"")} - ${esc((d.classification||{}).label||"deduction")}</td><td>${d.win_probability}</td><td><b>$${Number(d.expected_recovery_value_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b></td><td><button class="btn small" data-pid="${esc(m.payment_id)}" onclick="dispatchClaim(this.dataset.pid)">Dispatch dispute email &rarr;</button></td></tr>`).join("")}</table></div>`;
   }catch(e){}
 }
 let MAIL_FOCUS=null;
@@ -704,7 +704,7 @@ function renderMailHub(){
 }
 function renderMailTabs(h){
   const el=$("mail-tabs"); if(!el) return;
-  el.innerHTML=HUB_CATS.map(([k,label])=>`<button class="mtab ${HUB_CAT===k?"active":""}" onclick="setHubCat('${k}')">${esc(label)}<span class="cnt">${(h[k]||[]).length}</span></button>`).join("");
+  el.innerHTML=HUB_CATS.map(([k,label])=>`<button class="mtab ${HUB_CAT===k?"active":""}" data-cat="${esc(k)}" onclick="setHubCat(this.dataset.cat)">${esc(label)}<span class="cnt">${(h[k]||[]).length}</span></button>`).join("");
 }
 function mrowSel(cat,i){ HUB_SEL[cat]=i; renderMailList(); renderMailPreview(); }
 function renderMailList(){
@@ -745,7 +745,7 @@ function renderMailPreview(){
     el.innerHTML=`<div class="mhhead"><b>${esc(d.payment_id)} - ${esc(d.payer)}</b>${pill((d.reason_code||"")+" - "+(d.classification||"deduction"),"warn")}</div>
     <p style="margin:8px 0">Claim <b>${money(d.claimed_cents)}</b> · win probability <b>${d.win_probability}</b> · expected recovery <b>$${Number(d.expected_recovery_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b> · invoices ${(d.invoices||[]).map(esc).join(", ")||"-"}</p>
     <p>${pill(d.pod_clean?"POD trace: clean proof of delivery on file":"POD trace: proof of delivery not verified", d.pod_clean?"ok":"warn")} <small>Source: payment ${esc(d.payment_id)} and its deduction record in the latest run.</small></p>
-    <div class="tonechips">${HUB_TONES.map(([t,l])=>`<button class="tonechip ${HUB_TONE===t?"on":""}" onclick="setHubTone('${t}')">${esc(l)}</button>`).join("")}</div>
+    <div class="tonechips">${HUB_TONES.map(([t,l])=>`<button class="tonechip ${HUB_TONE===t?"on":""}" data-tone="${esc(t)}" onclick="setHubTone(this.dataset.tone)">${esc(l)}</button>`).join("")}</div>
     ${mpDraftShell()}`;
     hubDraftDisputeInto();
   } else if(cat==="chases"){
@@ -774,7 +774,7 @@ function mpRenderDraft(r, sendLabel, srcPill){
 }
 async function hubDraftDisputeInto(){
   const seq=MP_SEQ, d=HUB.disputes[HUB_SEL.disputes]; if(!d) return;
-  try{ const r=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"dispute_email",tone:HUB_TONE,facts:{payment_id:d.payment_id,payer:d.payer,claimed_cents:d.claimed_cents,reason_code:d.reason_code,win_probability:d.win_probability,expected_recovery_usd:d.expected_recovery_usd}})});
+  try{ const r=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"dispute_email",tone:HUB_TONE,facts:{payment_id:d.payment_id,payer:d.payer,claimed_cents:d.claimed_cents,reason_code:d.reason_code,win_probability:d.win_probability,expected_recovery_usd:d.expected_recovery_usd,pod_clean:!!d.pod_clean}})});
     if(seq!==MP_SEQ) return;
     mpRenderDraft(r,"Send claim",pill(r.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(r),"info"));
   }catch(e){ const box=$("mp-draft"); if(box&&seq===MP_SEQ) box.innerHTML=`<small>Draft failed: ${esc(e.message)}</small>` }

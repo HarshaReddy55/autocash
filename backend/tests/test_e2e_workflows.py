@@ -24,7 +24,10 @@ def _open_count():
 
 def test_approval_settles_invoices_and_issues_erp_document():
     _seed_run("v9-settle-1")
-    assert _open_count() == 19
+    # Auto-posted matches settle their invoices in the run itself (12 of
+    # 19 invoices sit inside the 10 auto-posted matches), so the open
+    # ledger after a run is the residual book, not the full case.
+    assert _open_count() == 7
     appr = client.get("/api/v1/approvals").json()
     p7 = next(a for a in appr if a["payment_id"] == "P7")
     r = client.post(f"/api/v1/matches/{p7['match_id']}/decision",
@@ -34,7 +37,7 @@ def test_approval_settles_invoices_and_issues_erp_document():
     assert d["erp_document_id"] and d["erp_document_id"].startswith("DZ-"), d
     assert d["settled_invoices"], d
     # the settled invoices have left the open ledger
-    assert _open_count() == 19 - len(d["settled_invoices"])
+    assert _open_count() == 7 - len(d["settled_invoices"])
     open_ids = {i["invoice_id"] for i in client.get("/api/v1/invoices").json()}
     assert not (set(d["settled_invoices"]) & open_ids)
     # the decision record on the match carries the same document id
@@ -53,7 +56,7 @@ def test_reject_settles_nothing():
     assert r.status_code == 200, r.text
     d = r.json()
     assert d["erp_document_id"] is None and d["settled_invoices"] == []
-    assert _open_count() == 19
+    assert _open_count() == 7  # auto-posts settled theirs in the run; a rejection settles nothing
 
 
 def test_policy_preview_diffs_without_touching_the_workspace():
@@ -73,4 +76,4 @@ def test_policy_preview_diffs_without_touching_the_workspace():
     # the dry run wrote nothing: no new run, policy untouched, queue intact
     assert len(client.get("/api/v1/runs").json()) == runs_before
     assert len(client.get("/api/v1/approvals").json()) == 5
-    assert _open_count() == 19
+    assert _open_count() == 7

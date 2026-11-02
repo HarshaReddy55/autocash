@@ -22,15 +22,17 @@ from copilot import answer as copilot_answer
 from seed import seed_invoices, seed_payments, GROUND_TRUTH
 import ml as mlmod
 from forecast import forecast_cash_in, prioritise_collections
-from mail import mail_config, reminder_draft, reminder_tone, send_mail, settlement_draft
-from erp_sap import build_posting_document, dispute_accrual_journal
+from mail import mail_config, mail_config_public, reminder_draft, reminder_tone, send_mail, settlement_draft
+from erp_sap import build_posting_document, dispute_accrual_journal, document_number_for
 import rust_bridge
 
 DATA_DIR = os.environ.get("AUTOCASH_DATA_DIR", os.path.join(os.path.dirname(__file__), "..", "data"))
 from tenants import TenantStore, ROLE_CAPS
 store = TenantStore(os.path.abspath(DATA_DIR))
 BOOTSTRAP_KEY = os.environ.get("AUTOCASH_BOOTSTRAP_KEY", "")
-_repos = {}
+from collections import OrderedDict as _OrderedDict
+_repos = _OrderedDict()
+_REPO_CACHE_MAX = 128  # session workspaces held open at once; base tenants are never evicted
 _models = {}
 
 def _now_iso():
@@ -47,12 +49,26 @@ def repo_for(tenant_id):
     # locked' and surface a 500). Every new browser session is a cold
     # tenant in the public demo, so this race is on the hot path.
     repo = _repos.get(tenant_id)
-    if repo is None:
-        with _repos_lock:
-            repo = _repos.get(tenant_id)
-            if repo is None:
-                repo = Repository(store.db_path(tenant_id))
-                _repos[tenant_id] = repo
+    if repo is not None:
+        _repos.move_to_end(tenant_id)
+        return repo
+    with _repos_lock:
+        repo = _repos.get(tenant_id)
+        if repo is None:
+            repo = Repository(store.db_path(tenant_id))
+            _repos[tenant_id] = repo
+            # Anonymous demo sessions each open a repository (and a
+            # database file). Cap the open set so a busy public link
+            # cannot exhaust connections or memory; the least recently
+            # used SESSION workspaces are closed first. Their data is
+            # ephemeral demo state and reloads in one action.
+            while len(_repos) > _REPO_CACHE_MAX:
+                victim = next((k for k in _repos if "--" in k and k != tenant_id), None)
+                if victim is None:
+                    break
+                old = _repos.pop(victim)
+                try: old.conn.close()
+                except Exception: pass
     return repo
 
 from fastapi import Header, HTTPException, Depends, Request
@@ -86,9 +102,12 @@ def auth_context(x_api_key: str = Header(default=""), x_tenant_id: str = Header(
         store.ensure_tenant(chosen["id"], chosen["name"])
         effective = chosen["id"]
         if _SESSION_RE.match(x_workspace_session or ""):
-            effective = f"{chosen['id']}--{x_workspace_session[:8]}"
+            # The full validated UUID keys the session workspace. A
+            # truncated prefix (the earlier 8-hex form) let two
+            # visitors whose UUIDs shared a prefix share one workspace.
+            effective = f"{chosen['id']}--{x_workspace_session}"
         return {"tenant_id": effective, "base_tenant": chosen["id"],
-                "session": x_workspace_session[:8] if effective != chosen["id"] else None,
+                "session": x_workspace_session if effective != chosen["id"] else None,
                 "role": "admin", "mode": "dev-open"}
     ctx = store.resolve(x_api_key)
     if ctx is None:
@@ -145,6 +164,11 @@ def health():
 @app.post("/api/v1/seed")
 def seed(ctx=Depends(auth_context)):
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    # Seeding stages a FRESH labelled workspace: prior run records from
+    # an earlier evaluation must not leak into this one (a payment that
+    # was reconciled in a previous seed is not "already reconciled"
+    # here - it was never staged here).
+    repo.clear_workspace()
     invs = seed_invoices()
     for inv in invs: repo.add_invoice(inv)
     pays = seed_payments()
@@ -311,7 +335,16 @@ def workspace_run(ctx=Depends(auth_context)):
     pays = repo.all_payments()
     if not pays:
         raise HTTPException(409, "nothing staged - load a case or stage payments first")
-    run = run_batch(repo, pays, _policy_for(repo, ctx["tenant_id"], None),
+    if not repo.pending_payments():
+        runs = repo.list_runs(1)
+        if runs:
+            # Every staged payment is already reconciled. Executing
+            # again must not solve them twice: return the standing run.
+            return {"run": {"run_id": runs[0]["run_id"], "status": runs[0]["status"],
+                            "idempotent_replay": True,
+                            "note": "every staged payment is already reconciled - nothing was solved twice"},
+                    "workspace": _workspace_state(repo)}
+    run = run_batch(repo, repo.pending_payments(), _policy_for(repo, ctx["tenant_id"], None),
                     "wsrun-" + uuid.uuid4().hex[:10], actor=f"api:{ctx['role']}")
     _finish_run_outputs(repo, run)
     return {"run": run, "workspace": _workspace_state(repo)}
@@ -400,7 +433,8 @@ def seed_referenced(body: SeedRefsIn, ctx=Depends(auth_context)):
 
 @app.get("/api/v1/invoices")
 def invoices(ctx=Depends(auth_context)):
-    need(ctx, "read"); return [asdict(i) for i in repo_for(ctx["tenant_id"]).open_invoices()]
+    need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
+    return _attach_partials(repo, [asdict(i) for i in repo.open_invoices()])
 
 class InvoiceEdit(BaseModel):
     gross_cents: Optional[int] = None
@@ -427,10 +461,22 @@ def edit_invoice(invoice_id: str, body: InvoiceEdit, ctx=Depends(auth_context)):
         raise HTTPException(422, "nothing to change")
     repo.update_invoice_fields(invoice_id, gross_cents=body.gross_cents,
                                discount_rate=body.discount_rate)
+    # A PROPOSED match that allocated this invoice was computed from
+    # its old value: withdraw those proposals (their payments return
+    # to staged) so the next run re-solves them against the new value.
+    restaged = []
+    for a in repo.list_proposed(500):
+        if invoice_id in (a.get("invoices") or []):
+            repo.delete_payment_run_records(a["payment_id"])
+            restaged.append(a["payment_id"])
     repo.audit("workspace-ui", "edit_invoice", "invoice", invoice_id,
-               {"gross_cents": body.gross_cents, "discount_rate": body.discount_rate}, _now_iso())
+               {"gross_cents": body.gross_cents, "discount_rate": body.discount_rate,
+                "restaged_payments": restaged}, _now_iso())
     inv = next(i for i in repo.open_invoices() if i.invoice_id == invoice_id)
-    return {"invoice": asdict(inv), "note": "Matches still reflect the old value until the batch is re-run."}
+    return {"invoice": asdict(inv), "restaged_payments": restaged,
+            "note": ("Proposals that allocated this invoice were withdrawn - those payments "
+                     "are staged again and will re-solve on the next run.") if restaged else
+                    "Open invoice updated."}
 
 class PaymentEdit(BaseModel):
     amount_cents: Optional[int] = None
@@ -462,11 +508,17 @@ def edit_payment(payment_id: str, body: PaymentEdit, ctx=Depends(auth_context)):
         raise HTTPException(422, "nothing to change")
     repo.update_payment_fields(payment_id, amount_cents=body.amount_cents,
                                remittance_text=body.remittance_text, references=refs)
+    restaged = False
+    if m:  # a PROPOSED match exists (posted matches refused above)
+        repo.delete_payment_run_records(payment_id)
+        restaged = True
     repo.audit("workspace-ui", "edit_payment", "payment", payment_id,
-               {"amount_cents": body.amount_cents, "references": refs}, _now_iso())
+               {"amount_cents": body.amount_cents, "references": refs, "restaged": restaged}, _now_iso())
     pay = next(p for p in repo.all_payments() if p.payment_id == payment_id)
     return {"payment": asdict(pay), "references": pay.references,
-            "note": "Matches still reflect the old value until the batch is re-run."}
+            "note": ("Its earlier proposal was withdrawn by this edit - the payment is staged "
+                     "again and will re-solve on the next run.") if restaged else
+                    "Staged payment updated."}
 
 def _uploaded_story(repo, lead):
     """The brief's situation line for uploaded data, built from the live
@@ -496,6 +548,20 @@ def import_invoices(payload: dict, ctx=Depends(auth_context)):
     out = parse_invoices_csv(payload.get("csv_text", ""))
     if mode == "replace":
         repo.clear_workspace()
+    skipped_settled = []
+    if mode == "append":
+        # A settled invoice belongs to a posted document. Re-importing
+        # it must not silently reopen it: those rows are skipped and
+        # reported, never overwritten.
+        settled_ids = repo.settled_invoice_ids() | {
+            r[0] for r in repo.conn.execute("SELECT invoice_id FROM invoices WHERE status='SETTLED'").fetchall()}
+        keep = []
+        for inv in out["invoices"]:
+            if inv.invoice_id in settled_ids:
+                skipped_settled.append(inv.invoice_id)
+            else:
+                keep.append(inv)
+        out["invoices"] = keep
     for inv in out["invoices"]: repo.add_invoice(inv)
     if out["invoices"]:
         lead = ("An uploaded ledger replaced the workspace" if mode == "replace"
@@ -504,12 +570,16 @@ def import_invoices(payload: dict, ctx=Depends(auth_context)):
                                       "loaded_at": _now_iso(), "expect": {}, "expect_exceptions": {},
                                       "story": _uploaded_story(repo, lead)})
     return {"imported": len(out["invoices"]), "mapping": out["mapping"], "errors": out["errors"],
+            "skipped_settled": skipped_settled,
             "fingerprint": out["fingerprint"], "mode": mode, "workspace": _workspace_state(repo)}
 
 @app.post("/api/v1/batches")
 def batches(body: BatchIn, ctx=Depends(auth_context)):
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
-    pol = _policy_for(repo, ctx["tenant_id"], body.policy)
+    # A batch run executes under the tenant's stored policy. An inline
+    # policy in the request body is NOT honoured here - previewing a
+    # candidate policy is what /api/v1/policy/preview exists for.
+    pol = _policy_for(repo, ctx["tenant_id"], None)
     pays = [_pay(p) for p in body.payments]
     for p in pays: repo.add_payment(p, payment_fingerprint(p))
     run = run_batch(repo, pays, pol, body.idempotency_key, actor=f"api:{ctx['role']}")
@@ -773,10 +843,38 @@ def run_stream(body: StreamIn, ctx=Depends(auth_context)):
         payments = [_pay(p) for p in body.payments]
         for p in payments: repo.add_payment(p, payment_fingerprint(p))
     elif body.use_workspace:
-        payments = repo.pending_payments() or repo.all_payments()
+        payments = repo.pending_payments()
+        if not payments:
+            # Replay for show: every staged payment is already
+            # reconciled, so the stream re-runs the case on a scratch
+            # copy of the workspace (the policy-preview pattern). The
+            # live lanes animate the real engine; the real workspace -
+            # its matches, decisions and drafts - is never touched.
+            import tempfile, shutil as _sh2
+            _td2 = tempfile.mkdtemp(prefix="autocash-replay-")
+            trepo = Repository(os.path.join(_td2, "replay.db"))
+            for inv in repo.all_invoices(): trepo.add_invoice(inv)
+            for p0 in repo.all_payments(): trepo.add_payment(p0, "")
+            for row in repo.conn.execute("SELECT raw_name, customer, source FROM aliases").fetchall():
+                trepo.conn.execute("INSERT OR REPLACE INTO aliases VALUES (?,?,?)", row)
+            trepo.conn.commit()
+            pol = _policy_for(repo, ctx["tenant_id"], None)
+            q0 = _queue.Queue()
+            try:
+                r0 = run_batch(trepo, trepo.all_payments(), pol, "replay-" + uuid.uuid4().hex[:10],
+                               actor="stream-replay", on_event=q0.put)
+            finally:
+                trepo.conn.close(); _sh2.rmtree(_td2, ignore_errors=True)
+            events = []
+            while not q0.empty(): events.append(q0.get())
+            def _replay_gen():
+                for e in events:
+                    yield f"data: {json.dumps(e)}\n\n"
+                yield f"data: {json.dumps({'type': 'batch_done', 'run_id': r0['run_id'], 'payments': r0['payments'], 'auto_posted': r0['auto_posted'], 'replay': True})}\n\n"
+            return StreamingResponse(_replay_gen(), media_type="text/event-stream")
     else:
         payments = []
-    pol = _policy_for(repo, ctx["tenant_id"], body.policy)
+    pol = _policy_for(repo, ctx["tenant_id"], None)
     q = _queue.Queue()
     def _run():
         try:
@@ -828,6 +926,7 @@ def match_decision(match_id: str, body: DecisionIn, ctx=Depends(auth_context)):
     refusal = not lines
     erp_document_id = None
     settled = []
+    partials = []
     parked = False
     if body.decision == "approve" and not refusal:
         # The posting document reference for this approval, derived from
@@ -835,14 +934,44 @@ def match_decision(match_id: str, body: DecisionIn, ctx=Depends(auth_context)):
         # the same id, so the approval and the document can be tied
         # together by anyone holding either one.
         erp_document_id = "DZ-" + fingerprint[:10].upper()
-        settled = [l["invoice_id"] for l in lines]
-        repo.settle_invoices(settled)
+        residual_cents = res.get("residual_cents")
+        if residual_cents is None:
+            # Stored match results carry the residual inside the
+            # derivation equation, not as a top-level field.
+            residual_cents = ((res.get("derivation") or {}).get("equation") or {}).get("residual_cents") or 0
+        if residual_cents >= 0:
+            # Fully covered - exact, or overpaid with the excess carried
+            # as an on-account credit in the clearing document: every
+            # line invoice is settled in full.
+            settled = [l["invoice_id"] for l in lines]
+        else:
+            # Partial payment: the shortfall is attributed pro-rata
+            # across the lines (the last line takes the rounding
+            # remainder) and every invoice stays OPEN with its balance
+            # reduced by what was actually applied. Settling a part-paid
+            # invoice in full would erase a live receivable from the
+            # ledger and the forecast.
+            total_net = sum(l.get("net_cents") or 0 for l in lines)
+            applied_total = total_net + residual_cents
+            _done = 0
+            for _i, l in enumerate(lines):
+                if _i == len(lines) - 1:
+                    applied_i = applied_total - _done
+                elif total_net:
+                    applied_i = (l.get("net_cents") or 0) * applied_total // total_net
+                    _done += applied_i
+                else:
+                    applied_i = 0
+                partials.append({"invoice_id": l["invoice_id"],
+                                 "applied_cents": applied_i,
+                                 "remaining_cents": (l.get("gross_cents") or 0) - applied_i})
     elif body.decision == "approve" and refusal:
         parked = True
     res["approval"] = {"decision": body.decision, "by_role": ctx["role"],
                        "at": decided_at, "fingerprint": fingerprint,
                        "erp_document_id": erp_document_id,
                        "settled_invoices": settled,
+                       "partial_application": partials,
                        "parked_in_suspense": parked}
     if body.decision == "reject":
         new_status = "REJECTED"
@@ -850,13 +979,30 @@ def match_decision(match_id: str, body: DecisionIn, ctx=Depends(auth_context)):
         new_status = "PARKED_SUSPENSE"
     else:
         new_status = "APPROVED_POSTED"
-    repo.update_match(match_id, new_status, res)
+    if not repo.update_match_if_proposed(match_id, new_status, res):
+        raise HTTPException(409, "match was decided by a concurrent request - refresh and review")
+    if settled:
+        repo.settle_invoices(settled)
+    for _pa in partials:
+        repo.reduce_invoice_gross(_pa["invoice_id"], _pa["remaining_cents"])
+    if new_status == "APPROVED_POSTED":
+        # Learn the payer's alias from a human-confirmed match: the
+        # name on the wire now maps to this customer in future runs.
+        pay0 = res.get("payment") or {}
+        cust0 = None
+        _first_iid = settled[0] if settled else (partials[0]["invoice_id"] if partials else None)
+        if _first_iid:
+            row0 = repo.get_invoice_row(_first_iid)
+            cust0 = (row0 or {}).get("customer")
+        if pay0.get("payer_raw") and cust0 and pay0["payer_raw"].strip().lower() != cust0.strip().lower():
+            repo.add_alias(pay0["payer_raw"], cust0, "approval")
     repo.audit(f"api:{ctx['role']}",
                "match_parked_suspense" if parked else f"match_{body.decision}d",
                "match", match_id,
                {"payment_id": m["payment_id"], "run_id": m["run_id"],
                 "fingerprint": fingerprint, "erp_document_id": erp_document_id,
-                "settled_invoices": settled}, decided_at)
+                "settled_invoices": settled,
+                "partial_application": partials}, decided_at)
     if body.decision == "approve" and not parked:
         # The approval itself generates the Category-3 settlement
         # confirmation in the Mail Hub, citing the clearing document
@@ -950,8 +1096,17 @@ def ai_draft(body: DraftIn, request: Request, ctx=Depends(auth_context)):
     need(ctx, "run")
     if body.kind not in ("dispute_email", "rebuttal", "chase_email"):
         raise HTTPException(422, "kind must be dispute_email, rebuttal or chase_email")
+    facts = dict(body.facts or {})
+    if body.kind in ("dispute_email", "rebuttal") and facts.get("payment_id"):
+        # Proof-of-delivery state is a fact of record, not a drafting
+        # choice: take it from the stored match so no draft can claim a
+        # clean signed POD the record does not support.
+        repo = repo_for(ctx["tenant_id"])
+        m = repo.latest_match_for_payment(str(facts["payment_id"]))
+        if m:
+            facts["pod_clean"] = bool((m["result"].get("payment") or {}).get("pod_verified_clean"))
     client, _budget = _gemini_for(request)
-    return draft_message(body.kind, body.tone, body.facts or {}, client=client)
+    return draft_message(body.kind, body.tone, facts, client=client)
 
 @app.get("/api/v1/tenants/demo")
 def demo_tenants(ctx=Depends(auth_context)):
@@ -987,9 +1142,13 @@ def erp_document(payment_id: str, ctx=Depends(auth_context)):
     m = repo.latest_match_for_payment(payment_id)
     if not m: raise HTTPException(404, "no match recorded for this payment yet")
     res = m["result"]
-    doc_id = (res.get("approval") or {}).get("erp_document_id")
+    # A document number exists once a match has CLEARED (auto-posted
+    # or approved). A merely proposed match gets a preview: no number.
+    doc_id = (res.get("approval") or {}).get("erp_document_id") or (
+        document_number_for(m["match_id"]) if m["status"] in ("AUTO_POSTED", "APPROVED_POSTED") else None)
+    customers = {i.invoice_id: i.customer for i in repo.all_invoices()}
     doc = build_posting_document(res, res.get("payment") or {"payment_id": payment_id},
-                                 document_number=doc_id)
+                                 document_number=doc_id, customers=customers)
     out = {"match_id": m["match_id"], "run_id": m["run_id"], "status": m["status"],
            "document": doc}
     ded = res.get("deduction") or {}
@@ -1011,13 +1170,14 @@ def erp_run_documents(ctx=Depends(auth_context)):
                 "totals": {"documents": 0, "debit_cents": 0, "credit_cents": 0, "balanced": True}}
     run = runs[0]
     docs, claims = [], []
+    customers = {i.invoice_id: i.customer for i in repo.all_invoices()}
     total_dr = total_cr = 0
     for m in repo.matches_for_run(run["run_id"]):
         res = m["result"] or {}
         if m["status"] in ("AUTO_POSTED", "APPROVED_POSTED") and res.get("lines"):
-            doc_id = (res.get("approval") or {}).get("erp_document_id")
+            doc_id = (res.get("approval") or {}).get("erp_document_id") or document_number_for(m["match_id"])
             doc = build_posting_document(res, res.get("payment") or {"payment_id": m["payment_id"]},
-                                         document_number=doc_id)
+                                         document_number=doc_id, customers=customers)
             docs.append({"payment_id": m["payment_id"], "status": m["status"],
                          "payer": (res.get("payment") or {}).get("payer_raw", ""),
                          "document": doc})
@@ -1076,7 +1236,7 @@ def diagnostics(ctx=Depends(auth_context)):
                        "ci": "GitHub Actions runs pytest and cargo test before every image build"},
         "ai": {"gemini_configured": GeminiClient().available,
                "gemini_last_error": LAST_GEMINI_ERROR["error"]},
-        "mail": mail_config(),
+        "mail": mail_config_public(),
     }
 
 @app.get("/api/v1/export/bundle")
@@ -1104,12 +1264,15 @@ def export_bundle(ctx=Depends(auth_context)):
         run = runs[0]
         matches = repo.matches_for_run(run["run_id"])
         docs = {}
+        customers = {i.invoice_id: i.customer for i in repo.all_invoices()}
         for m in matches:
             res = m["result"]
             if res.get("lines"):
                 docs[m["payment_id"]] = build_posting_document(
                     res, res.get("payment") or {"payment_id": m["payment_id"]},
-                    document_number=(res.get("approval") or {}).get("erp_document_id"))
+                    document_number=(res.get("approval") or {}).get("erp_document_id") or (
+                        document_number_for(m["match_id"]) if m["status"] in ("AUTO_POSTED", "APPROVED_POSTED") else None),
+                    customers=customers)
         bundle["run"] = run
         bundle["matches"] = matches
         bundle["exceptions"] = repo.exceptions_for_run(run["run_id"])
@@ -1154,9 +1317,17 @@ def docs_list(ctx=Depends(auth_context)):
     need(ctx, "read")
     d = _docs_dir()
     if not d: return {"docs": [], "note": "docs directory not present in this deployment"}
+    # The pack reads in a fixed flow: requirements first, then the evidence
+    # behind them, then design, build, deployment, market, and finally the
+    # builder's own account of what went wrong and how it was put right.
+    # Files not in this list keep alphabetical order after the named pack.
+    DOC_ORDER = ["PRD.md", "RESEARCH_SEGMENT.md", "ARCHITECTURE.md",
+                 "IMPLEMENTATION_GUIDE.md", "DEPLOY.md", "AWS_DEPLOY.md",
+                 "GO_TO_MARKET.md", "CHALLENGES.md"]
+    names = [f for f in os.listdir(d) if f.endswith(".md")]
+    names.sort(key=lambda f: (DOC_ORDER.index(f) if f in DOC_ORDER else len(DOC_ORDER), f))
     out = []
-    for f in sorted(os.listdir(d)):
-        if not f.endswith(".md"): continue
+    for f in names:
         path = os.path.join(d, f)
         title = f[:-3].replace("_", " ")
         try:
@@ -1184,6 +1355,24 @@ def docs_read(name: str, ctx=Depends(auth_context)):
 def copilot(body: CopilotIn, ctx=Depends(auth_context)):
     need(ctx, "read"); return copilot_answer(repo_for(ctx["tenant_id"]), body.question, models()["delay_model"])
 
+def _current_month():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).month
+
+
+def _attach_partials(repo, rows):
+    """Mark invoices an approved partial payment has paid down: the
+    row's gross is the remaining balance, and the partial record says
+    how much was applied and what the invoice originally stood at."""
+    applied = repo.partial_applications()
+    for r in rows:
+        n = applied.get(r["invoice_id"])
+        if n:
+            r["partial"] = {"applied_cents": n,
+                            "original_cents": r["gross_cents"] + n}
+    return rows
+
+
 def _residual_invoices(repo):
     """The post-reconciliation ledger: open invoices no run has cleared
     yet. Forecast, collections and dunning all read this one state, so
@@ -1205,7 +1394,7 @@ def forecast(ctx=Depends(auth_context)):
     invs = _residual_invoices(repo)
     if not invs:
         return {"state": "ready", "weeks": [], "invoices": [], "customers": [], "summary": None}
-    out = forecast_cash_in(invs, models()["delay_model"])
+    out = forecast_cash_in(invs, models()["delay_model"], current_month=_current_month())
     out["state"] = "ready"
     return out
 
@@ -1226,8 +1415,8 @@ def forecast_whatif(body: WhatifIn, ctx=Depends(auth_context)):
     if body.customer not in {i.customer for i in invs}:
         raise HTTPException(422, f"unknown customer {body.customer}")
     shift = max(-21, min(21, body.shift_days))
-    base = forecast_cash_in(invs, models()["delay_model"])
-    moved = forecast_cash_in(invs, models()["delay_model"],
+    base = forecast_cash_in(invs, models()["delay_model"], current_month=_current_month())
+    moved = forecast_cash_in(invs, models()["delay_model"], current_month=_current_month(),
                              shift_customer=body.customer, shift_days=shift)
     return {"customer": body.customer, "shift_days": shift,
             "base_expected_horizon_cents": base["summary"]["expected_horizon_cents"],
@@ -1247,7 +1436,8 @@ def collections(ctx=Depends(auth_context)):
     need(ctx, "read"); repo = repo_for(ctx["tenant_id"])
     if not repo.get_meta("active_case") or not repo.list_runs(1):
         return []
-    return prioritise_collections(_residual_invoices(repo), models()["delay_model"])
+    return prioritise_collections(_residual_invoices(repo), models()["delay_model"],
+                                  current_month=_current_month())
 
 # ---- Mail: send the product's drafts, with an honest outbox ----
 class MailSendIn(BaseModel):
@@ -1414,8 +1604,15 @@ def get_policy(ctx=Depends(auth_context)):
 @app.put("/api/v1/policy")
 def put_policy(body: PolicyIn, ctx=Depends(auth_context)):
     need(ctx, "admin")
-    Policy(**body.policy)  # validate against domain policy fields
+    try:
+        Policy(**body.policy)  # field names AND value ranges (Policy.__post_init__)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(422, f"invalid policy: {e}")
+    before = store.get_policy(ctx["tenant_id"])
     store.set_policy(ctx["tenant_id"], body.policy)
+    repo = repo_for(ctx["tenant_id"])
+    repo.audit(f"api:{ctx['role']}", "policy_updated", "policy", ctx["tenant_id"],
+               {"before": before, "after": body.policy}, _now_iso())
     return {"saved": True}
 
 @app.post("/api/v1/policy/preview")
@@ -1427,7 +1624,10 @@ def policy_preview(body: PolicyIn, ctx=Depends(auth_context)):
     run I already have?' with the real engine, not an estimate."""
     need(ctx, "run")
     repo = repo_for(ctx["tenant_id"])
-    Policy(**body.policy)  # validate
+    try:
+        Policy(**body.policy)  # validate
+    except (TypeError, ValueError) as e:
+        raise HTTPException(422, f"invalid policy: {e}")
     candidate = dict(body.policy)
     # The active case's disclosed override normally sits on top of the
     # tenant policy - but a key the user has just EDITED in the form is

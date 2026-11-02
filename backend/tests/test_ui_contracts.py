@@ -27,7 +27,9 @@ def test_erp_document_is_balanced_and_built_from_the_match():
     assert d["balanced"] is True
     assert d["total_debits_cents"] == d["total_credits_cents"] > 0
     assert d["bapi_payload"]["DOCUMENTHEADER"]["DOCUMENT_TYPE"] == "DZ"
-    assert d["status"] == "preview"  # nothing approved yet, no document number
+    # P1 auto-posted: a cleared match always carries a deterministic
+    # document number (never null), staged for SAP - not a preview.
+    assert d["status"] == "STAGED_FOR_SAP_POSTING" and d["document_number"].startswith("DZ-1400")
     # P3 carries a dispute claim: the revrec accrual must ride along
     r3 = client.get("/api/v1/payments/P3/erp-document")
     assert r3.status_code == 200, r3.text
@@ -55,6 +57,10 @@ def test_docs_list_and_read():
     d = client.get("/api/v1/docs").json()
     names = {x["name"] for x in d["docs"]}
     assert {"PRD.md", "ARCHITECTURE.md", "GO_TO_MARKET.md"} <= names
+    # The pack reads in flow order, PRD first, challenges last.
+    ordered = [x["name"] for x in d["docs"]]
+    assert ordered[0] == "PRD.md" and ordered[-1] == "CHALLENGES.md", ordered
+    assert ordered.index("ARCHITECTURE.md") < ordered.index("GO_TO_MARKET.md")
     r = client.get("/api/v1/docs/PRD.md")
     assert r.status_code == 200 and len(r.json()["markdown"]) > 500
     assert client.get("/api/v1/docs/NOPE.md").status_code == 404
@@ -151,7 +157,7 @@ def test_v31_staged_lifecycle_contract():
     per-agent counts, Next Step footers, the live-proof mutation, the
     quota-safe AI framing, and v31 cache-bust stamps."""
     html = client.get("/").text
-    assert 'css/livecube.css?v=36' in html and 'js/state.js?v=36' in html
+    assert 'css/livecube.css?v=40' in html and 'js/state.js?v=40' in html
     # v32 declutter: no standalone Load demo case button anywhere, and the
     # author credit sits above the nav so it can never clip items 12-14
     assert '>Load demo case</button>' not in html

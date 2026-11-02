@@ -41,7 +41,9 @@ def test_approval_decision_carries_fingerprint():
     _seed_run()
     appr = client.get("/api/v1/approvals").json()
     assert appr, "seed run must leave held matches"
-    mid = appr[0]["match_id"]
+    # Newest-first queue: skip the zero-line refusal (its approval
+    # parks it) and take a real held match.
+    mid = next(a["match_id"] for a in appr if a["invoices"])
     r = client.post(f"/api/v1/matches/{mid}/decision", json={"decision": "approve"})
     assert r.status_code == 200, r.text
     fp = r.json()["fingerprint"]

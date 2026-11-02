@@ -30,17 +30,26 @@ def test_live_event_sequence():
 
 def test_maker_checker_and_approval_flow():
     s = _seed()
-    # threshold $100: every exact match above it must wait for an approver
-    b = c.post("/api/v1/batches", json={"idempotency_key": "mc-" + uuid.uuid4().hex[:8],
-                                        "payments": s["payments"],
-                                        "policy": {"maker_checker_threshold_cents": 10000}}).json()
+    # threshold $100: every exact match above it must wait for an approver.
+    # Policy is set through the policy endpoint - an inline policy on
+    # /batches is not honoured (previewing one is /policy/preview's job).
+    prior = c.get("/api/v1/policy").json()
+    c.put("/api/v1/policy", json={"policy": {"maker_checker_threshold_cents": 10000}})
+    try:
+        b = c.post("/api/v1/batches", json={"idempotency_key": "mc-" + uuid.uuid4().hex[:8],
+                                            "payments": s["payments"]}).json()
+    finally:
+        c.put("/api/v1/policy", json={"policy": prior})
     held = [r for r in b["results"] if r["auto_posted"] is False and r["status"] == "OPTIMAL_EXACT_MATCH"]
     assert held, "expected at least one exact match held by maker-checker"
     assert all("Maker-checker" in (r["decision_reason"] or "") for r in held)
     appr = c.get("/api/v1/approvals").json()
     mine = [a for a in appr if a["run_id"] == b["run_id"]]
     assert mine, "held matches must appear in the approvals queue"
-    mid = mine[0]["match_id"]
+    # The queue is newest-first and its head can be the zero-line
+    # refusal (approving that one parks it, by design). This test
+    # approves a real held match - one that carries invoices.
+    mid = next(a["match_id"] for a in mine if a["invoices"])
     out = c.post(f"/api/v1/matches/{mid}/decision", json={"decision": "approve"}).json()
     assert out["status"] == "APPROVED_POSTED"
     again = c.post(f"/api/v1/matches/{mid}/decision", json={"decision": "approve"})

@@ -4,6 +4,7 @@ import re
 from domain import Policy
 
 REASON_TAXONOMY = [
+    ("RC-12", "Unearned Discount", ["unearned discount", "discount window"]),
     ("RC-02", "Damaged/Shortage Claim", ["short", "damage", "damaged", "missing", "broken", "shortage"]),
     ("RC-05", "Pricing Discrepancy", ["price", "pricing", "rate", "quoted"]),
     ("RC-07", "Promotional Allowance", ["promo", "promotion", "allowance", "rebate", "deal"]),

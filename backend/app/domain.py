@@ -40,6 +40,20 @@ class Policy:
     tolerance_writeoff_cents: int = 2500 # variances <= $25 write off, do not dispute
     maker_checker_threshold_cents: int = 10_000_000  # $100,000
 
+    def __post_init__(self):
+        # A policy is accounting judgement expressed as data; nonsense
+        # values (a negative hold limit, a confidence bar above 1) must
+        # fail loudly at the boundary, never reach the solver.
+        if not (0.0 <= float(self.automation_threshold) <= 1.0):
+            raise ValueError("automation_threshold must be between 0 and 1")
+        for f in ("age_weight", "discount_penalty", "residual_penalty", "deduction_penalty",
+                  "auto_dispute_min_recovery_usd", "dispute_processing_cost_usd"):
+            if float(getattr(self, f)) < 0:
+                raise ValueError(f"{f} must be >= 0")
+        for f in ("tolerance_writeoff_cents", "maker_checker_threshold_cents"):
+            if int(getattr(self, f)) < 0:
+                raise ValueError(f"{f} must be >= 0")
+
 @dataclass
 class MatchLine:
     invoice_id: str

@@ -40,6 +40,15 @@ def mail_config():
             "tls": os.environ.get("AUTOCASH_SMTP_TLS", "1") != "0",
             "configured": bool(host and sender)}
 
+def mail_config_public():
+    """mail_config() for API responses: everything a diagnostic view
+    legitimately shows, with the SMTP password replaced by the fact of
+    its presence. The raw config (with the password) is for the mail
+    sender's own use inside this process only."""
+    cfg = mail_config()
+    return {**cfg, "password": None,
+            "password_configured": bool(cfg.get("password"))}
+
 
 def reminder_tone(inv):
     """Dunning is segmented by where the invoice sits against its due

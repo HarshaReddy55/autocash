@@ -110,8 +110,8 @@ def _dispute_template(tone, f):
             f"Dear Accounts Payable team,\n\n"
             f"We are disputing a deduction of {_money(f.get('claimed_cents', 0))} taken on payment "
             f"{f.get('payment_id', '')}. Our engine classified it as {f.get('classification_label', 'unexplained')} "
-            f"(ERP reason code {f.get('reason_code', '')}). The proof of delivery for this shipment was signed "
-            f"clean, and the deduction does not match the agreed terms.\n\n"
+            f"(ERP reason code {f.get('reason_code', '')}). "
+            f"{'The proof of delivery for this shipment was signed clean, and the deduction does not match the agreed terms.' if f.get('pod_clean') else 'We are reviewing the delivery evidence for this shipment, and the deduction does not match the agreed terms.'}\n\n"
             f"{_TONE_OPEN.get(tone, _TONE_OPEN['strict'])}\n\n"
             f"Our assessment: win probability {f.get('win_probability', '')}, expected recovery "
             f"${float(f.get('expected_recovery_usd') or 0):,.2f}. We would rather close this quickly than "
@@ -141,9 +141,15 @@ def _rebuttal_template(f):
                     f"recovery was ${expected:,.2f}, so your offer is fair. Please treat this dispute as "
                     f"settled on payment of the agreed sum.")
         return (f"Thank you for the offer. We cannot accept ${offer:,.2f}. Our assessed expected recovery on "
-                f"this claim is ${expected:,.2f} (win probability {f.get('win_probability', '')} on a clean "
-                f"signed POD, claim {claimed}). We will settle today at ${expected:,.2f}, or proceed with "
+                f"this claim is ${expected:,.2f} (win probability {f.get('win_probability', '')}{' on a clean signed POD' if f.get('pod_clean') else ''}, "
+                f"claim {claimed}). We will settle today at ${expected:,.2f}, or proceed with "
                 f"the full dispute for {claimed}.")
+    if kind == "damage" and not f.get("pod_clean"):
+        # The signed-clean assertion is only made when the record
+        # supports it; the rest of the rebuttal stands on its own.
+        return ("A concealed-damage claim needs the receiving inspection report and photos, shared inside the "
+                "contract window. Please share them and we will review the same day. Until then the deduction "
+                f"of {claimed} stays disputed in full.")
     body = _REBUTTALS.get(kind, _REBUTTALS["damage"])
     return body.format(claimed=claimed)
 

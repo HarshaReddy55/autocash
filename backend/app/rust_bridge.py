@@ -26,12 +26,15 @@ def best_subset_py(target_cents, invoices, age_weight_milli=50):
     return {"selected_ids": list(ids), "selected_sum_cents": best,
             "residual_cents": cap - best, "score_milli": score}
 
-def best_subset_rust(target_cents, invoices, age_weight_milli=50, binary=None):
+def best_subset_rust(target_cents, invoices, age_weight_milli=50, binary=None, timeout=30):
     binary = binary or os.environ.get("AUTOCASH_KERNEL_BIN", "")
     if not binary or not os.path.exists(binary):
         return None
     payload = json.dumps({"target_cents": target_cents, "age_weight_milli": age_weight_milli,
                           "invoices": invoices})
-    out = subprocess.run([binary], input=payload, capture_output=True, text=True, timeout=30)
+    try:
+        out = subprocess.run([binary], input=payload, capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        return None
     if out.returncode != 0: return None
     return json.loads(out.stdout)

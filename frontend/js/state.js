@@ -3,7 +3,7 @@
    Loaded first; the other modules build on these globals. */
 const $=id=>document.getElementById(id);
 const money=c=>{c=c||0; const v=(Math.abs(c)/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}); return c<0?"-$"+v:"$"+v};
-const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function sessionId(){let s=sessionStorage.getItem("autocash_session_id");if(!s){s=(crypto.randomUUID?crypto.randomUUID():"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=Math.random()*16|0,v=c==="x"?r:(r&0x3|0x8);return v.toString(16)}));sessionStorage.setItem("autocash_session_id",s);}return s}
 function authHeaders(){const tn=localStorage.getItem("ac-tenant")||"";return {"Content-Type":"application/json","X-Workspace-Session":sessionId(),...(tn?{"X-Tenant-Id":tn}:{})}}
 let __apiN=0;

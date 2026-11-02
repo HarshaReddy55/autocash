@@ -150,7 +150,13 @@ def deterministic_parse(text):
     amounts = []
     for rx in AMT_RES:
         amounts += [_cents(m.group(1)) for m in rx.finditer(text) if m.group(1)]
-    amount = max(amounts) if amounts else 0
+    # The wire amount is the one the text ties to the payment itself
+    # (paid / wire / total / amount near it). max() alone would promote
+    # any larger invoice figure mentioned in the note to the wire.
+    anchored = []
+    for m in re.finditer(r"(?:paid|payment|wire|total|amount|received)\D{0,24}?\$?\s*([0-9][0-9,]*\.[0-9]{2})", text, re.I):
+        anchored.append(_cents(m.group(1)))
+    amount = (anchored[-1] if anchored else (max(amounts) if amounts else 0))
     ded = 0; reason = ""
     low = text.lower()
     dm = re.search(r"deduct[a-z]*[^0-9$]*\$?\s*([0-9,]+(?:\.[0-9]{2})?)", low)
@@ -170,7 +176,7 @@ def deterministic_parse(text):
     return {"payer": payer, "amount_cents": amount, "invoice_refs": invs, "po_refs": pos,
             "deduction_cents": ded, "deduction_reason": reason}
 
-def verify_parse(parsed, known_invoice_ids, known_po_numbers):
+def verify_parse(parsed, known_invoice_ids, known_po_numbers, text=None):
     issues = []
     unknown_refs = []
     for ref in parsed.get("invoice_refs", []):
@@ -182,6 +188,16 @@ def verify_parse(parsed, known_invoice_ids, known_po_numbers):
             issues.append(f"PO reference {ref} not found in open ledger")
     if not parsed.get("amount_cents"):
         issues.append("no payment amount extracted")
+    if text and parsed.get("amount_cents"):
+        # An extracted amount the source never states is a hallucination
+        # risk, whoever produced it: check the figure (in its common
+        # written forms) against the raw text.
+        cents = int(parsed["amount_cents"])
+        dollars, rem = divmod(abs(cents), 100)
+        forms = {f"{dollars:,}.{rem:02d}", f"{dollars}.{rem:02d}", f"{dollars:,}"}
+        if rem == 0: forms.add(str(dollars))
+        if not any(f in text for f in forms):
+            issues.append(f"extracted amount ${dollars:,}.{rem:02d} does not appear in the source text")
     return {"verified": len(issues) == 0, "issues": issues,
             "unknown_refs": unknown_refs}
 
@@ -222,6 +238,6 @@ def parse_remittance(text, known_invoice_ids=None, known_po_numbers=None, client
             source = "deterministic_fallback"
     else:
         fields, degraded = deterministic_parse(text), True
-    v = verify_parse(fields, known_invoice_ids or set(), known_po_numbers or set())
+    v = verify_parse(fields, known_invoice_ids or set(), known_po_numbers or set(), text=text)
     return {"fields": fields, "source": source, "degraded": degraded,
             "ai_state": ai_state, "verification": v}

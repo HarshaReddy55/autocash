@@ -22,8 +22,11 @@ def test_case_load_makes_one_shared_workspace():
     assert len(invs) == 18
     # run the staged payment through the normal batch path
     b = c.post("/api/v1/batches", json={"idempotency_key": "ws-1", "payments": out["payments"]}).json()
-    assert b["results"][0]["status"] == "OPTIMAL_EXACT_MATCH"
-    assert {l["invoice_id"] for l in b["results"][0]["lines"]} == {"S1-INV-1", "S1-INV-2"}
+    # v39: results arrive in evidence (processing) order, not submission
+    # order - select the hero payment by id, not by position.
+    hero = next(r for r in b["results"] if r["payment_id"] == out["payments"][0]["payment_id"])
+    assert hero["status"] == "OPTIMAL_EXACT_MATCH"
+    assert {l["invoice_id"] for l in hero["lines"]} == {"S1-INV-1", "S1-INV-2"}
     ws2 = c.get("/api/v1/workspace").json()
     assert ws2["latest_run"]["run_id"] == b["run_id"]
     assert ws2["pending_payments"] == []
@@ -65,9 +68,14 @@ def test_custom_case_loads_into_workspace():
                      {"invoice_id": "C-2", "customer": "Apex Manufacturing", "gross_cents": 20000, "po_number": "PO-2", "age_days": 10}],
         "payments": [{"payment_id": "C-P1", "payer_raw": "Apex Manufacturing", "amount_cents": 50000}]}).json()
     ws = out["workspace"]
-    assert ws["case"]["id"] == "custom" and ws["open_invoices"] == 2 and len(ws["pending_payments"]) == 0
+    # Loading a builder case runs it in the same call; the single wire
+    # exactly covers both invoices and auto-posts, settling them - so
+    # the open book is empty afterwards and nothing is left pending.
+    assert ws["case"]["id"] == "custom" and ws["open_invoices"] == 0 and len(ws["pending_payments"]) == 0
+    assert {l["invoice_id"] for l in out["run"]["results"][0]["lines"]} == {"C-1", "C-2"}
+    # Re-submitting the same payments must not solve them twice.
     b = c.post("/api/v1/batches", json={"idempotency_key": "ws-custom-1", "payments": out["payments"]}).json()
-    assert {l["invoice_id"] for l in b["results"][0]["lines"]} == {"C-1", "C-2"}
+    assert b["results"] == [] and b["skipped_existing"] == 1
 
 def test_stage_payment_endpoint():
     r = c.post("/api/v1/workspace/stage-payment", json={

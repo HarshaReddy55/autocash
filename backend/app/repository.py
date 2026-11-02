@@ -171,10 +171,48 @@ class Repository:
                 res = json.loads(rj)
             except Exception:
                 continue
+            residual = res.get("residual_cents")
+            if residual is None:
+                residual = ((res.get("derivation") or {}).get("equation") or {}).get("residual_cents") or 0
+            handler_settled = set((res.get("approval") or {}).get("settled_invoices") or [])
             for l in res.get("lines") or []:
-                if l.get("invoice_id"):
-                    out.add(l["invoice_id"])
+                iid = l.get("invoice_id")
+                if not iid:
+                    continue
+                # Fully covered matches (exact, or overpaid with the
+                # excess carried as an on-account credit) settle every
+                # line. A PARTIALLY paid invoice is settled only where
+                # the decision itself recorded it - a part-paid invoice
+                # stays in the residual book at its reduced balance.
+                if residual >= 0 or iid in handler_settled:
+                    out.add(iid)
         return out
+
+    def partial_applications(self):
+        """invoice_id -> total cents applied by approved partial payments,
+        read from the approval records on cleared matches, so the figure
+        always agrees with the decisions that produced it."""
+        out = {}
+        rows = self.conn.execute(
+            "SELECT result_json FROM matches WHERE status='APPROVED_POSTED'").fetchall()
+        for (rj,) in rows:
+            try:
+                res = json.loads(rj)
+            except Exception:
+                continue
+            for pa in (res.get("approval") or {}).get("partial_application") or []:
+                iid = pa.get("invoice_id")
+                if iid:
+                    out[iid] = out.get(iid, 0) + (pa.get("applied_cents") or 0)
+        return out
+
+    def reduce_invoice_gross(self, invoice_id, new_gross_cents):
+        """Partial application: a payment covered part of this invoice.
+        The invoice stays OPEN with its balance reduced to what is still
+        owed - it leaves neither the ledger nor the forecast until the
+        remaining balance itself is paid."""
+        self._x("UPDATE invoices SET gross_cents=? WHERE invoice_id=?",
+                (max(0, int(new_gross_cents)), invoice_id))
 
     def settle_invoices(self, invoice_ids):
         """Mark invoices settled (posted against an approved match). They
@@ -216,8 +254,8 @@ class Repository:
         rows = self.conn.execute("SELECT payment_id, kind, severity, recommended_action, detail_json, status FROM exceptions WHERE run_id=?", (run_id,)).fetchall()
         return [{"payment_id": r[0], "kind": r[1], "severity": r[2], "recommended_action": r[3], "detail": json.loads(r[4]), "status": r[5]} for r in rows]
     def matches_for_run(self, run_id):
-        rows = self.conn.execute("SELECT payment_id, status, solver, residual_cents, confidence, result_json FROM matches WHERE run_id=?", (run_id,)).fetchall()
-        return [{"payment_id": r[0], "status": r[1], "solver": r[2], "residual_cents": r[3], "confidence": r[4], "result": json.loads(r[5])} for r in rows]
+        rows = self.conn.execute("SELECT match_id, payment_id, status, solver, residual_cents, confidence, result_json FROM matches WHERE run_id=?", (run_id,)).fetchall()
+        return [{"match_id": r[0], "payment_id": r[1], "status": r[2], "solver": r[3], "residual_cents": r[4], "confidence": r[5], "result": json.loads(r[6])} for r in rows]
 
     def list_runs(self, limit=20):
         rows = self.conn.execute(
@@ -247,9 +285,9 @@ class Repository:
                 "status": row[3], "result": json.loads(row[4])}
 
     def get_invoice_row(self, invoice_id):
-        r = self.conn.execute("SELECT invoice_id, status, gross_cents, discount_rate FROM invoices WHERE invoice_id=?",
+        r = self.conn.execute("SELECT invoice_id, status, gross_cents, discount_rate, customer FROM invoices WHERE invoice_id=?",
                               (invoice_id,)).fetchone()
-        return {"invoice_id": r[0], "status": r[1], "gross_cents": r[2], "discount_rate": r[3]} if r else None
+        return {"invoice_id": r[0], "status": r[1], "gross_cents": r[2], "discount_rate": r[3], "customer": r[4]} if r else None
 
     def update_invoice_fields(self, invoice_id, gross_cents=None, discount_rate=None):
         """LiveCube inline edit. Only OPEN invoices can change - a settled
@@ -275,6 +313,27 @@ class Repository:
     def update_match(self, match_id, status, result):
         self._x("UPDATE matches SET status=?, result_json=? WHERE match_id=?",
                 (status, json.dumps(result), match_id))
+
+    def update_match_if_proposed(self, match_id, status, result):
+        """Compare-and-set decision claim: the status change lands only
+        if the match is still PROPOSED. Two approvers clicking at the
+        same moment cannot both win - the loser gets False and the
+        caller answers 409, so no duplicate settlement, audit entry or
+        mail can be generated by a race."""
+        cur = self._x("UPDATE matches SET status=?, result_json=? WHERE match_id=? AND status='PROPOSED'",
+                      (status, json.dumps(result), match_id))
+        return cur.rowcount == 1
+
+    def add_alias(self, raw_name, customer, source="approval"):
+        self._x("INSERT OR REPLACE INTO aliases VALUES (?,?,?)",
+                ((raw_name or "").strip().lower(), customer, source))
+
+    def delete_payment_run_records(self, payment_id):
+        """Withdraw a payment's run records (its match and exceptions),
+        returning it to the staged, unreconciled state. Used when a
+        staged payment is edited: the edit must be able to re-solve."""
+        self._x("DELETE FROM matches WHERE payment_id=?", (payment_id,))
+        self._x("DELETE FROM exceptions WHERE payment_id=?", (payment_id,))
 
     def list_proposed(self, limit=50):
         rows = self.conn.execute(

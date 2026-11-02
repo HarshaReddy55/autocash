@@ -22,9 +22,21 @@ GL = {
     "discounts": ("415000", "Sales discounts allowed"),
     "deductions": ("529000", "Deductions accepted (within policy)"),
     "suspense": ("119900", "Unapplied cash suspense"),
+    "residual_ar": ("121600", "Residual receivable - part-paid invoices"),
+    "on_account": ("121900", "Unapplied cash - customer on-account"),
 }
 
 COMPANY_CODE = "1000"  # illustrative template value
+
+def document_number_for(match_id):
+    """A deterministic clearing-document number for a match that has no
+    approval-issued number (auto-posted matches): derived from the
+    match id, so every surface - the SAP page, the run documents, the
+    export - shows the SAME number for the same match, and a cleared
+    item never carries a null document number."""
+    import hashlib
+    n = int(hashlib.sha256(str(match_id).encode()).hexdigest()[:8], 16) % 900000 + 100000
+    return f"DZ-1400{n}"
 
 
 def _line(gl_key, debit_cents=0, credit_cents=0):
@@ -33,7 +45,7 @@ def _line(gl_key, debit_cents=0, credit_cents=0):
             "debit_cents": debit_cents, "credit_cents": credit_cents}
 
 
-def build_posting_document(match_result, payment, document_number=None):
+def build_posting_document(match_result, payment, document_number=None, customers=None):
     """Balanced DZ (customer payment) document for one match.
 
     Amounts come from the match's derivation equation and its lines -
@@ -57,10 +69,13 @@ def build_posting_document(match_result, payment, document_number=None):
     if deduction_applied:
         journal.append(_line("deductions", debit_cents=deduction_applied))
     if residual < 0:
-        journal.append(_line("suspense", debit_cents=-residual))
+        # Underpaid: the unpaid remainder is a residual receivable, not
+        # suspense - the customer still owes it and it stays visible.
+        journal.append(_line("residual_ar", debit_cents=-residual))
     journal.append(_line("ar_control", credit_cents=gross))
     if residual > 0:
-        journal.append(_line("suspense", credit_cents=residual))
+        # Overpaid: the excess is the customer's on-account credit.
+        journal.append(_line("on_account", credit_cents=residual))
 
     debits = sum(l["debit_cents"] for l in journal)
     credits = sum(l["credit_cents"] for l in journal)
@@ -82,7 +97,10 @@ def build_posting_document(match_result, payment, document_number=None):
             for l in journal
         ],
         "ACCOUNTRECEIVABLE": [
-            {"CUSTOMER": inv.get("customer"),
+            {"CUSTOMER": (customers or {}).get(inv.get("invoice_id"))
+                         or inv.get("customer")
+                         or (payment or {}).get("payer_raw")
+                         or "UNKNOWN",
              "INVOICE_ID": inv.get("invoice_id"),
              "AMOUNT_CENTS": inv.get("gross_cents", 0)}
             for inv in lines
@@ -91,7 +109,7 @@ def build_posting_document(match_result, payment, document_number=None):
     return {
         "document_type": "DZ",
         "document_number": document_number,
-        "status": "posted_reference" if document_number else "preview",
+        "status": "STAGED_FOR_SAP_POSTING" if document_number else "preview",
         "journal": journal,
         "total_debits_cents": debits,
         "total_credits_cents": credits,
