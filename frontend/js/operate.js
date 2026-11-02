@@ -335,14 +335,14 @@ function derivationHtml(d){
   Confidence: base ${cd.base ?? "-"} <small>(${esc(cd.base_rule||"")})</small><br>
   Simple baseline on the same shortlist: ${(g.invoices||[]).join(", ")||"nothing"} - residual ${money(g.residual_cents||0)} (${esc(g.status||"")}). <small>${esc(g.reading||"")}</small></div>`;
 }
-function storedDetail(i){
+function storedDetail(i,quiet){
   const m=lastMatches[i];const res=m.result||{};
   CUR_RESID=m.residual_cents||0;
   const lines=(res.lines||[]).map(l=>`<tr><td>${esc(l.invoice_id)}</td><td>${money(l.gross_cents)}</td><td>${money(l.discount_cents)}</td><td>${money(l.net_cents)}</td></tr>`).join("");
   const pay=(seedPayments||[]).find(p=>p.payment_id===m.payment_id)||res.payment||null;
   const norm={payment_id:m.payment_id,lines:res.lines||[],deduction:res.deduction,derivation:res.derivation,reasoning:res.reasoning,residual_cents:m.residual_cents};
   $("match-detail").innerHTML=`<div class="panel"><h3>Match evidence - ${esc(m.payment_id)} <span data-info="evidence"></span></h3><div class="detail">Decision <b>${esc(m.status)}</b> by solver <b>${esc(m.solver)}</b>, found via <b>${esc(res.matched_by||"-")}</b>, residual <b>${money(m.residual_cents)}</b>, confidence <b>${Number(m.confidence).toFixed(3)}</b>, solver time ${res.latency_ms??"-"} ms.${res.deduction_applied?" A claimed deduction was applied and judged by deduction intelligence.":""}</div>${res.deduction?`<div class="detail"><b>Deduction intelligence:</b> classified <b>${esc(res.deduction.classification?.label||"")}</b> (${esc(res.deduction.assigned_erp_reason_code||"")}), z-score ${res.deduction.z_score}, win probability ${res.deduction.win_probability??"n/a"}, expected recovery $${res.deduction.expected_recovery_value_usd} - decision: <b>${esc(res.deduction.autonomous_action)}</b>.<br><small>${esc(res.deduction.win_probability_basis||"")}</small></div>`:""}${reasoningHtml(res)}${derivationHtml(res.derivation)}${lines?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Net applied <span data-info="netapp"></span></th></tr>${lines}</table>`:"<small>No invoice lines - nothing was safe to propose.</small>"}${detailExtras(norm,pay)}</div>`;
-  $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800);
+  if(!quiet){ $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800); }
 }
 
 async function openSapShowcase(){
@@ -409,14 +409,14 @@ function autoExpandHero(mode){
     if(idx<0) idx=lastMatches.findIndex(m=>m.status==="AUTO_POSTED"&&(((m.result||{}).lines||[]).length));
     if(idx<0) idx=lastMatches.findIndex(m=>(((m.result||{}).lines||[]).length));
     if(idx<0) return;
-    storedDetail(idx);
+    storedDetail(idx,true);
   }else if(mode==="live"&&lastRun&&lastRun.results&&lastRun.results.length){
     const rs=lastRun.results;
     idx=rs.findIndex(r=>((r.deduction||{}).autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM"));
     if(idx<0) idx=rs.findIndex(r=>r.auto_posted&&(r.lines||[]).length);
     if(idx<0) idx=rs.findIndex(r=>(r.lines||[]).length);
     if(idx<0) return;
-    liveDetail(idx);
+    liveDetail(idx,true);
   }else return;
   setTimeout(()=>autoWhyNot(0),520);
 }
@@ -502,14 +502,14 @@ function erpClientHtml(r){
   const ap=r.approval||{};
   return `<div class="detail"><b>Posting preview - not a posting.</b> (Built in the browser for this view, because this match was produced by a clean-room use-case run and is not stored on the server.) Document type DZ (customer payment), generated from this match's own derivation, so every amount below is this payment's real money.${ap.erp_document_id?` <b>Document ${esc(ap.erp_document_id)}</b> - issued when this match was approved, derived from the approval's audit fingerprint, so the decision and this document can be tied together.`:""} The chart of accounts is an illustrative template in SAP style; no ERP is connected and nothing has been posted anywhere.<table><tr><th>GL</th><th>Account</th><th>Debit</th><th>Credit</th></tr>${rows.map(x=>`<tr><td>${x[0]}</td><td>${x[1]}</td><td>${x[2]?money(x[2]):""}</td><td>${x[3]?money(x[3]):""}</td></tr>`).join("")}<tr><td></td><td><b>Totals</b></td><td><b>${money(dr)}</b></td><td><b>${money(cr)}</b></td></tr></table>${dr===cr?pill("debits equal credits","ok"):pill("does not balance","bad")}${dispute?`<p style="margin-top:10px"><b>Revenue recognition note (ASC 606 / IFRS 15, event-based):</b> this match carries a disputed deduction of <b>${money(ded.claimed_cents||0)}</b> (${esc(ded.assigned_erp_reason_code||"")}). The claim is carried as a disputed receivable (GL 121500) in the dispute ledger rather than netted against revenue, so the transaction price is not understated by a deduction whose validity is still being contested. The variable consideration resolves when the dispute closes - it is not guessed at month-end.</p>`:""}</div>`;
 }
-function liveDetail(i){
+function liveDetail(i,quiet){
   const r=lastRun.results[i];
   CUR_RESID=r.residual_cents||0;
   const lines=r.lines.map(l=>`<tr><td>${esc(l.invoice_id)}</td><td>${money(l.gross_cents)}</td><td>${money(l.discount_cents)}</td><td>${money(l.net_cents)}</td></tr>`).join("");
   const ded=r.deduction?`<div class="detail"><b>Deduction intelligence:</b> classified <b>${esc(r.deduction.classification?.label||"")}</b> (${esc(r.deduction.assigned_erp_reason_code||"")}), z-score ${r.deduction.z_score}, win probability ${r.deduction.win_probability??"n/a"}, expected recovery $${r.deduction.expected_recovery_value_usd} - decision: <b>${esc(r.deduction.autonomous_action)}</b>.<br><small>${esc(r.deduction.win_probability_basis||r.deduction.note||"")}</small>${(r.deduction.derivation||[]).length?`<br><b>Step by step:</b><br>${r.deduction.derivation.map(x=>"• "+esc(x)).join("<br>")}`:""}</div>`:"";
   const pay=(seedPayments||[]).find(p=>p.payment_id===r.payment_id);
   $("match-detail").innerHTML=`<div class="panel"><h3>Match evidence - ${esc(r.payment_id)} <span data-info="evidence"></span></h3><div class="detail">Status <b>${esc(r.status)}</b>, matched by <b>${esc(r.matched_by)}</b>, auto-posted: <b>${r.auto_posted?"yes":"no"}</b>, residual <b>${money(r.residual_cents)}</b>, confidence <b>${Number(r.confidence).toFixed(3)}</b>.</div>${lines?`<table><tr><th>Invoice <span data-info="invid"></span></th><th>Gross <span data-info="gross"></span></th><th>Discount <span data-info="disc"></span></th><th>Net applied <span data-info="netapp"></span></th></tr>${lines}</table>`:"<small>No invoice lines.</small>"}${reasoningHtml(r)}${derivationHtml(r.derivation)}${ded}${detailExtras(r,pay)}</div>`;
-  $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800);
+  if(!quiet){ $("match-detail").scrollIntoView({behavior:"smooth",block:"nearest"}); scheduleApprovalsJump(2800); }
 }
 async function whyNot(pid,btn){
   const pay=(seedPayments||[]).find(p=>p.payment_id===pid); if(!pay)return;

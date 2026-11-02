@@ -118,3 +118,28 @@ def test_smooth_layer_contract():
     for token in [".skeleton-line", ".skeleton-card", ".spin",
                   ".row-highlight-flash", "#loadbar", "prefers-reduced-motion"]:
         assert token in css, token
+
+
+def test_sections_are_siblings_never_nested():
+    # Regression (v30): the v28 Policy Studio move dropped the section's
+    # closing tag, so Evaluations..Product Thinking nested INSIDE Policy
+    # Studio and could never display - every ancestor is display:none
+    # unless Policy itself is active. Sections must be siblings.
+    from html.parser import HTMLParser
+    class P(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.open_sections = []
+            self.nested = []
+        def handle_starttag(self, tag, attrs):
+            if tag == "section":
+                if self.open_sections:
+                    self.nested.append(dict(attrs).get("id"))
+                self.open_sections.append(dict(attrs).get("id"))
+        def handle_endtag(self, tag):
+            if tag == "section" and self.open_sections:
+                self.open_sections.pop()
+    p = P()
+    p.feed(client.get("/").text)
+    assert p.nested == [], f"sections nested inside another section: {p.nested}"
+    assert p.open_sections == [], f"unclosed sections: {p.open_sections}"
