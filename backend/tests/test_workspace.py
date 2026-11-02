@@ -13,9 +13,9 @@ def test_case_load_makes_one_shared_workspace():
     ws = out["workspace"]
     assert ws["case"]["id"] == "split-exact"
     assert ws["open_invoices"] == 18
-    # v21: loading runs the case in the same call - nothing stays pending
-    assert len(ws["pending_payments"]) == 0 and ws["latest_run"] is not None
-    assert out["run"]["payments"] == 12
+    # v31: loading stages the case - everything pending, nothing run yet
+    assert ws["run_status"] == "staged" and ws["latest_run"] is None
+    assert len(ws["pending_payments"]) == 12 and out["run"] is None
     # every view reads the same workspace
     invs = c.get("/api/v1/invoices").json()
     assert {"S1-INV-1", "S1-INV-2", "S1-INV-3"} <= {i["invoice_id"] for i in invs}
@@ -32,10 +32,14 @@ def test_load_replaces_previous_case():
     c.post("/api/v1/cases/seed/load")
     ws = c.get("/api/v1/workspace").json()
     assert ws["case"]["id"] == "seed" and ws["open_invoices"] == 19
+    c.post("/api/v1/cases/seed/load")
+    c.post("/api/v1/workspace/run")
     c.post("/api/v1/cases/duplicate-guard/load")
     ws = c.get("/api/v1/workspace").json()
     assert ws["case"]["id"] == "duplicate-guard" and ws["open_invoices"] == 16
-    assert len(ws["pending_payments"]) == 0 and ws["latest_run"] is not None
+    # loading a new case clears the previous case AND its run (v31 staged)
+    assert ws["run_status"] == "staged" and ws["latest_run"] is None
+    assert len(ws["pending_payments"]) == ws["staged_payments"]
 
 def test_reset_empties_workspace():
     c.post("/api/v1/cases/seed/load")

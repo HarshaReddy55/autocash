@@ -14,6 +14,7 @@ client = TestClient(api_mod.app, raise_server_exceptions=False)
 def test_workspace_carries_all_payments_after_a_run():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")  # v31: execution is explicit
     ws = client.get("/api/v1/workspace").json()
     # v21: the load itself runs the case, so nothing is pending - and
     # the full staged set survives as the replay set.

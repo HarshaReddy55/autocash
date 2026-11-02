@@ -80,7 +80,7 @@ async function decorateExceptionActions(){
   }catch(e){}
 }
 function openChaseFor(pid){ HUB_CAT="chases"; go("mail"); toast("The remittance inquiry for "+pid+" is drafted in this queue - Unapplied / Exception Wire Inquiries"); }
-async function runStagedNow(btn){ await runWorkspaceBatch(btn); go("run"); }
+async function runStagedNow(btn){ executeActiveCase(); }
 async function runWorkspaceBatch(btn){
   const __busy=btn?busyBtn(btn,"Solving MILP & matching payments..."):null;
   try{
@@ -104,7 +104,8 @@ async function refreshDash(){
     // Independent reads in parallel - sequentially they made the
     // dashboard trail the case bar by several seconds on the live box.
     const [h, inv, runs]=await Promise.all([api("/health"), api("/api/v1/invoices"), api("/api/v1/runs")]);
-    $("k-ai").textContent=!h.gemini_configured?"Deterministic mode":(h.gemini_last_error?"Gemini configured - last call failed":"Gemini live");
+    window.__AI_LAST_ERROR=h.gemini_last_error||"";
+    $("k-ai").textContent=aiModeLabel(h.gemini_configured,h.gemini_last_error);
     fillInfo();
     renderImpact();
     if(runs.length){
@@ -144,8 +145,15 @@ async function refreshDash(){
     }
     if(runs.length){const t=runs[0].payments?runs[0].auto_posted/runs[0].payments:0;$("k-touch").textContent=(t*100).toFixed(1)+"%"}
     else{$("k-touch").textContent="-"}
-    if((!WS||!WS.case)&&!runs.length){$("dash-out").innerHTML=`<div class="msg"><b>No case is loaded.</b> This workspace is empty on purpose - nothing is preloaded. Load the demo case, pick a use case, build one, or upload your own files, and every page will work on that same data. <button class="btn" style="margin-left:10px" onclick="loadCase('seed',this,{stay:true})">Load demo case</button></div>`}
-    else{$("dash-out").innerHTML=""}
+    if(WS&&WS.run_status==="staged"){
+      // v32: the readiness panel lives ONCE, in the Case Brief above.
+      // The ribbon summarises the staged state; it never duplicates it.
+      $("dash-out").innerHTML="";
+      $("r-stp").innerHTML="Staged"; { const sub=$("r-stp-sub"); if(sub) sub.textContent=`${WS.staged_payments} wires waiting to run`; }
+      $("r-susp").innerHTML=money(WS.staged_payment_total_cents||0); $("r-lat").innerHTML="-"; $("r-settled").innerHTML="0"; $("r-exc").innerHTML="-";
+    }
+    else if((!WS||!WS.case)&&!runs.length){$("dash-out").innerHTML=`<div class="msg"><b>No case is loaded.</b> This workspace is empty on purpose - nothing is preloaded. Load the demo case, pick a use case, build one, or upload your own files, and every page will work on that same data. <button class="btn" style="margin-left:10px" onclick="loadCase('seed',this,{stay:true})">Load demo case</button></div>`}
+    else if(!(WS&&WS.run_status==="staged")){$("dash-out").innerHTML=""}
     $("runs-t").innerHTML=runs.length?`<table><tr><th>Run <span data-info="runid"></span></th><th>When (UTC) <span data-info="when"></span></th><th>Status <span data-info="runstatus"></span></th><th>Matches <span data-info="matchesn"></span></th><th>Auto-posted <span data-info="autopn"></span></th><th>Exceptions <span data-info="excn"></span></th></tr>${runs.map(r=>`<tr class="clickable" onclick="openRun('${r.run_id}')"><td><small>${esc(r.run_id)}</small></td><td><small>${esc((r.created_at||"").replace("T"," ").slice(0,19))}</small></td><td>${pill(r.status,"ok")}</td><td>${r.matches}</td><td>${r.auto_posted}</td><td>${r.exceptions}</td></tr>`).join("")}</table>`:"<small>No runs yet. Load a case or upload payments to create the first run.</small>";
   }catch(e){toast("Could not load dashboard: "+e.message)}
 }
@@ -372,12 +380,19 @@ function renderRun(b){
 }
 const AGENT_SHORT={"Capture Agent":"Capture","Linking Agent":"Linking","Matching Agent":"Matching","Deduction Agent":"Deduction","Policy Agent":"Policy","Briefing Agent":"Briefing"};
 let PIPE_DATA=[];
+function orderRunPanels(executed){
+  const ap=$("agent-panel"), sp=$("staged-panel"), gr=$("results-grid");
+  if(!ap||!sp||!gr) return;
+  if(executed){ if(gr.previousElementSibling!==ap) ap.after(gr); }
+  else { if(gr.previousElementSibling!==sp) sp.after(gr); }
+}
 async function renderAgentPipe(runId){
   const el=$("agent-pipe"); if(!el) return;
   if(!runId){ el.innerHTML="<small>Run a batch and the six agents appear here with their measured timings. Click any agent to inspect the payload it handed to the next.</small>"; const ai=$("agent-inspect"); if(ai)ai.innerHTML=""; return }
   try{ const d=await api(`/api/v1/runs/${runId}/agents`); PIPE_DATA=d.agents||[];
     if(!PIPE_DATA.length){ el.innerHTML="<small>This run predates agent pipeline recording. Run the batch again and each agent's timing and payload will be inspectable here.</small>"; return }
-    el.innerHTML=`<div class="apipe">${PIPE_DATA.map((a,i)=>`${i?'<div class="aarr">&#8594;</div>':""}<button class="anode" onclick="inspectAgent(${i})"><b>${esc(AGENT_SHORT[a.agent]||a.agent)}</b><span>${a.status==="ON_DEMAND"?"composes on demand":a.latency_ms+" ms measured"}</span>${pill(a.status==="COMPLETED"?"Completed":a.status==="ON_DEMAND"?"On demand":a.status, a.status==="COMPLETED"?"ok":"info")}</button>`).join("")}</div><small>Timings and payloads are the steps the engine recorded while this run executed - click an agent to inspect what it handed on.</small>`;
+    const cnt=a=>{ const e=a.evidence||{}; if(a.agent==="Capture Agent") return `${e.payments_received??"-"} wires in`; if(a.agent==="Linking Agent") return `${e.candidates_total??"-"} candidates`; if(a.agent==="Matching Agent") return `${e.payments_solved??"-"} wires solved`; if(a.agent==="Deduction Agent") return `${e.claims_judged??"-"} claims judged`; if(a.agent==="Policy Agent") return `${e.auto_posted??"-"} auto-posted, ${(e.held_for_approval??e.proposed_for_review??"-")} held`; if(a.agent==="Briefing Agent") return `${e.settlement_drafts_recorded??"-"} drafts composed`; return "" };
+    el.innerHTML=`<div class="apipe">${PIPE_DATA.map((a,i)=>`${i?'<div class="aarr">&#8594;</div>':""}<button class="anode" onclick="inspectAgent(${i})"><b>${esc(AGENT_SHORT[a.agent]||a.agent)}</b><span>${cnt(a)}</span><span>${a.status==="ON_DEMAND"?"composes on demand":a.latency_ms+" ms measured"}</span>${pill(a.status==="COMPLETED"?"Completed":a.status==="ON_DEMAND"?"On demand":a.status, a.status==="COMPLETED"?"ok":"info")}</button>`).join("")}</div><small>This strip is the run's permanent record: timings and payloads are the steps the engine recorded while it executed - click an agent to inspect what it handed on.</small>`;
     setTimeout(autoInspectMatching,80);
   }catch(e){ el.innerHTML=""; }
 }
@@ -528,10 +543,10 @@ const SAMPLE_INV=`invoice_id,customer,amount,po_number,discount_rate,age_days,du
 INV-2001,Apex Manufacturing,120.00,PO-11,0,40,-40
 INV-2002,Apex Manufacturing,80.00,PO-12,0,5,-5
 INV-2003,Apex Manufacturing,200.00,PO-13,0,30,-30
-INV-2004,BluePeak Electronics,1000.00,PO-21,0.02,25,-25`;
+INV-2004,Northwind Traders,1000.00,PO-21,0.02,25,-25`;
 const SAMPLE_PAY=`payment_id,payer,amount,remittance,deduction,deduction_reason
 Y1,Apex Manufacturing,200.00,"Wire for INV-2001 and INV-2002",,
-Y2,BluePeak Electronics,930.00,"BluePeak Electronics wire less 2% discount less deduction",50.00,shortage on delivery`;
+Y2,Northwind Traders,930.00,"Northwind Traders wire less 2% discount less deduction",50.00,shortage on delivery`;
 const TPL_INV=`invoice_id,customer,amount,po_number,discount_rate,age_days,due_in_days\n`;
 const TPL_PAY=`payment_id,payer,amount,remittance,deduction,deduction_reason\n`;
 function fillSample(k){$(k==="inv"?"csv-inv":"csv-pay").value=k==="inv"?SAMPLE_INV:SAMPLE_PAY;toast("Sample loaded - now press the import button")}
@@ -605,7 +620,7 @@ async function importPayments(btn){
 /* ---------- Use cases ---------- */
 async function loadCases(){
   try{const list=await api("/api/v1/scenarios");
-    $("case-grid").innerHTML=list.map(s=>`<div class="panel scen"><h3>${esc(s.title)} <span data-info="casecard"></span></h3><div style="margin:2px 0 8px">${pill(`${s.invoices} invoices`,"info")} ${pill(`${s.payments} payments`,"info")} ${pill(`${s.customers} customers`,"info")} ${pill(`${money(s.open_cents)} open AR`,"grey")} ${pill(`${money(s.batch_cents)} batch`,"grey")}</div><div class="story">${esc(s.story)}</div><div class="shows"><b>What it proves:</b> ${esc(s.shows)}</div><p style="margin:8px 0 0"><button class="btn small" onclick="loadCase('${s.id}',this)">Load into workspace</button> <button class="btn small ghost" onclick="loadCaseAndRun('${s.id}',this)">Load and run live</button></p></div>`).join("");
+    $("case-grid").innerHTML=list.map(s=>`<div class="panel scen"><h3>${esc(s.title)} <span data-info="casecard"></span></h3><div style="margin:2px 0 8px">${pill(`${s.invoices} invoices`,"info")} ${pill(`${s.payments} payments`,"info")} ${pill(`${s.customers} customers`,"info")} ${pill(`${money(s.open_cents)} open AR`,"grey")} ${pill(`${money(s.batch_cents)} batch`,"grey")}</div><div class="story">${esc(s.story)}</div><div class="shows"><b>What it proves:</b> ${esc(s.shows)}</div><p style="margin:8px 0 0"><button class="btn small" onclick="loadCase('${s.id}',this)">Stage Case (Inspect Before Run)</button> <button class="btn small ghost" onclick="loadCaseAndRun('${s.id}',this)">Stage &amp; Run Now</button></p></div>`).join("");
   }catch(e){$("case-grid").innerHTML="<small>Could not load use cases.</small>"}
 }
 async function runCase(sid,btn){

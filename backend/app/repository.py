@@ -196,6 +196,10 @@ class Repository:
             "WHERE run_id=? ORDER BY id", (run_id,)).fetchall()
         return [{"agent": r[0], "status": r[1], "latency_ms": r[2],
                  "evidence": json.loads(r[3]) if r[3] else {}, "confidence": r[4]} for r in rows]
+    def update_step(self, run_id, agent, status, latency_ms, evidence):
+        self._x("UPDATE run_steps SET status=?, latency_ms=?, evidence_json=? WHERE run_id=? AND agent_name=?",
+                (status, latency_ms, json.dumps(evidence), run_id, agent))
+
     def add_step(self, run_id, agent, status, latency_ms, evidence, confidence):
         self._x("INSERT INTO run_steps(run_id, agent_name, status, latency_ms, evidence_json, confidence) VALUES (?,?,?,?,?,?)",
                 (run_id, agent, status, latency_ms, json.dumps(evidence), confidence))

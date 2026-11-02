@@ -15,6 +15,7 @@ client = TestClient(api_mod.app, raise_server_exceptions=False)
 def _seed():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")  # v31: execution is explicit
 
 
 def test_edit_open_invoice_amount_and_discount():

@@ -34,6 +34,7 @@ def test_forecast_v2_shape_and_drilldown():
 def test_forecast_whatif_moves_cash():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")  # v31: execution is explicit
     r = client.post("/api/v1/forecast/whatif",
                     json={"customer": "Cascade Chemicals", "shift_days": -14})
     assert r.status_code == 200, r.text

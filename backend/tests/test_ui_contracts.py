@@ -143,3 +143,45 @@ def test_sections_are_siblings_never_nested():
     p.feed(client.get("/").text)
     assert p.nested == [], f"sections nested inside another section: {p.nested}"
     assert p.open_sections == [], f"unclosed sections: {p.open_sections}"
+
+
+def test_v31_staged_lifecycle_contract():
+    """v31: loading stages, execution is explicit and visible. The shell
+    carries the readiness/gate helpers, the persistent agent strip with
+    per-agent counts, Next Step footers, the live-proof mutation, the
+    quota-safe AI framing, and v31 cache-bust stamps."""
+    html = client.get("/").text
+    assert 'css/livecube.css?v=32' in html and 'js/state.js?v=32' in html
+    # v32 declutter: no standalone Load demo case button anywhere, and the
+    # author credit sits above the nav so it can never clip items 12-14
+    assert '>Load demo case</button>' not in html
+    assert html.index('builtby') < html.index('<nav class="navrow">')
+    assert '<details class="agentref">' in html
+    assert html.count('class="nextstep"') == 13
+    js = ""
+    import os
+    fe = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", "js")
+    for f in ("state.js", "operate.js", "insight.js", "assist.js"):
+        js += open(os.path.join(fe, f)).read()
+    for token in ("run_status", "stagedGateHtml", "executeActiveCase",
+                  "Staged portfolio readiness", "mutateFirstWire",
+                  "Deterministic Verifier Fallback Active (Quota-Safe Mode",
+                  "goMailFor", "MAIL_FOCUS", "payments_received"):
+        assert token in js, token
+    # the backend stages on load: no run, explicit execution endpoint
+    import importlib
+    out = client.post("/api/v1/cases/seed/load").json()
+    assert out["run"] is None and out["workspace"]["run_status"] == "staged"
+    assert out["workspace"]["open_invoice_total_cents"] == 100_343_000
+    rr = client.post("/api/v1/workspace/run").json()
+    assert rr["workspace"]["run_status"] == "executed"
+    # v32: the Policy step reports the same held total as the top bar and
+    # the brief (5), with the maker-checker share broken out, and the
+    # Matching payload carries the rust kernel telemetry block
+    agents = {a["agent"]: a for a in client.get(
+        f"/api/v1/runs/{rr['run']['run_id']}/agents").json()["agents"]}
+    pol = agents["Policy Agent"]["evidence"]
+    assert pol["held_for_approval"] == 5
+    assert pol["held_breakdown"] == {"maker_checker_cap": 2, "other_proposed": 3}
+    mat = agents["Matching Agent"]["evidence"]
+    assert "rust_kernel" in mat and mat["rust_kernel"]["bridge"] == "rust_bridge.py"

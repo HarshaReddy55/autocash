@@ -10,9 +10,12 @@ client = TestClient(api_mod.app)
 
 def _seed_run(key):
     client.post("/api/v1/workspace/reset")
-    r = client.post("/api/v1/cases/seed/load")  # v21: loading runs the case
+    r = client.post("/api/v1/cases/seed/load")  # v31: loading stages the case
     assert r.status_code == 200, r.text
-    return r.json()["run"]
+    assert r.json()["run"] is None
+    rr = client.post("/api/v1/workspace/run")
+    assert rr.status_code == 200, rr.text
+    return rr.json()["run"]
 
 
 def _open_count():

@@ -43,7 +43,8 @@ def test_draft_ai_state_distinguishes_failure_from_no_key(monkeypatch):
 
 def test_brief_ai_state_under_hanging_gemini(monkeypatch):
     client.post("/api/v1/workspace/reset")
-    b = client.post("/api/v1/cases/seed/load").json()["run"]  # v21: load runs it
+    client.post("/api/v1/cases/seed/load")  # v31: load stages it
+    b = client.post("/api/v1/workspace/run").json()["run"]
     monkeypatch.setattr(api_mod, "GeminiClient", lambda *a, **k: _hanging_client())
     r = client.get(f"/api/v1/runs/{b['run_id']}/brief")
     assert r.status_code == 200, r.text
@@ -54,6 +55,7 @@ def test_brief_ai_state_under_hanging_gemini(monkeypatch):
 def test_copilot_answers_auto_posted_cash():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")  # v31: execution is explicit
     r = client.post("/api/v1/copilot", json={
         "question": "What is the auto-posted cash for this case?"})
     assert r.status_code == 200, r.text

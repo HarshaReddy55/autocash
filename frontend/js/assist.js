@@ -13,7 +13,7 @@ async function runParse(text){
     const issues=(out.verification?.issues||[]).map(x=>pill(x,"bad")).join(" ");
     const pipeHtml=(out.pipeline&&out.pipeline.length)?`<div class="pipe">${out.pipeline.map(p=>`<div class="step"><div class="st">${esc(p.stage)} <span data-info="${p.stage.startsWith("1")?"pex":p.stage.startsWith("2")?"psch":p.stage.startsWith("3")?"pver":"ptrust"}"></span></div><div class="en">${esc(p.engine)}${p.ms?` - ${p.ms} ms`:""}</div><p>${esc(p.detail)}${p.issues&&p.issues.length?`<br><span style="color:var(--bad)">${p.issues.map(esc).join("; ")}</span>`:""}</p></div>`).join("")}</div>`:"";
     $("parse-out").innerHTML=pipeHtml+`<div class="panel"><h3>Structured result <span data-info="parsefld"></span></h3>
-    <div class="detail">Parser: <b>${esc(out.source||"deterministic")}</b> ${out.degraded?pill("deterministic fallback - no Gemini key configured","warn"):""}<br>
+    <div class="detail">Parser: <b>${esc(out.source||"deterministic")}</b> ${out.degraded?pill(out.ai_state==="no_key"?"Deterministic Verifier Fallback Active (No AI Key - 100% Verified SLA)":(/429|quota/i.test(window.__AI_LAST_ERROR||"")?"Deterministic Verifier Fallback Active (Quota-Safe Mode - 100% Verified SLA)":"Deterministic fallback - Gemini did not answer (diagnostics on Agent Health)"),"warn"):""}<br>
     Amount: <b>${f.amount_cents!=null?money(f.amount_cents):"-"}</b> - Payer: <b>${esc(f.payer||"-")}</b> - Claimed deduction: <b>${f.deduction_cents!=null?money(f.deduction_cents):"-"}</b>${f.deduction_reason?` (${esc(f.deduction_reason)})`:""}<br>
     References extracted: ${refs}<br>${out.verification?(out.verification.verified?pill("Verifier: every reference exists in the open ledger","ok"):("Verifier flags: "+issues)):""}${(out.verification&&out.verification.unknown_refs&&out.verification.unknown_refs.length)?`<p style="margin:8px 0 0"><button class="btn small" onclick="seedRefsAndStage(this)">+ Auto-Seed Referenced Invoices into Ledger &amp; Stage Wire (${out.verification.unknown_refs.map(esc).join(", ")})</button> <small>Creates exactly those missing invoices in the ledger - at the wire amount for a single reference, or the amounts this remittance itself lists - then stages the wire against them.</small></p>`:""}</div>
     <details><summary><small>Raw response</small></summary><pre style="background:#0f172a;color:#dbeafe;padding:14px;border-radius:10px;overflow:auto;font-size:12px">${esc(JSON.stringify(out,null,2))}</pre></details></div>`;
@@ -199,7 +199,7 @@ async function cbRun(btn){
 const LOADERS={dash:async()=>{await Promise.all([refreshDash(),loadScore()]);loadAiStrip()},
 cases:async()=>{await loadCases()},
 upload:async()=>{wireAutoParse()},
-run:async()=>{await refreshWorkspace();if(WS&&WS.latest_run){const rid=WS.latest_run.run_id;const [m,x]=await Promise.all([api(`/api/v1/runs/${rid}/matches`),api(`/api/v1/runs/${rid}/exceptions`)]);renderStoredRun(rid,m,x)}await renderGradeFromStored();await loadGov();await loadApprovals()},
+run:async()=>{await refreshWorkspace();if(WS&&WS.latest_run){const rid=WS.latest_run.run_id;const [m,x]=await Promise.all([api(`/api/v1/runs/${rid}/matches`),api(`/api/v1/runs/${rid}/exceptions`)]);renderStoredRun(rid,m,x); if(window.orderRunPanels) orderRunPanels(true)}else { if(window.renderAgentPipe) renderAgentPipe(null); if(window.orderRunPanels) orderRunPanels(false); }await renderGradeFromStored();await loadGov();await loadApprovals()},
 ledger:async()=>{await loadLedger()},
 sap:loadSap,mail:loadMailHub,
 forecast:async()=>{await loadForecast()},
@@ -254,7 +254,7 @@ async function runLive(btn){
     const ws2=await refreshWorkspace();
     if(ws2&&ws2.latest_run){
       const [m,x]=await Promise.all([api(`/api/v1/runs/${ws2.latest_run.run_id}/matches`),api(`/api/v1/runs/${ws2.latest_run.run_id}/exceptions`)]);
-      renderStoredRun(ws2.latest_run.run_id,m,x); await renderGradeFromStored();
+      renderStoredRun(ws2.latest_run.run_id,m,x); if(window.orderRunPanels) orderRunPanels(true); await renderGradeFromStored();
     }
     refreshDash();
   }catch(e){}
@@ -395,13 +395,11 @@ async function renderFcDisputes(){
     <table><tr><th>Payment</th><th>Payer</th><th>Claim</th><th>Reason</th><th>Win probability</th><th>Expected recovery</th><th></th></tr>${claims.map(({m,d})=>`<tr><td>${esc(m.payment_id)}</td><td>${esc(d.payer||"")}</td><td>${money(d.claimed_cents||0)}</td><td>${esc(d.assigned_erp_reason_code||"")} - ${esc((d.classification||{}).label||"deduction")}</td><td>${d.win_probability}</td><td><b>$${Number(d.expected_recovery_value_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b></td><td><button class="btn small" onclick="dispatchClaim('${esc(m.payment_id)}')">Dispatch dispute email &rarr;</button></td></tr>`).join("")}</table></div>`;
   }catch(e){}
 }
+let MAIL_FOCUS=null;
+function goMailFor(cat,pid){ MAIL_FOCUS={cat:cat||"disputes",pid:pid||null}; if(window.setHubCat) setHubCat(MAIL_FOCUS.cat); go("mail"); }
 async function dispatchClaim(pid){
   const ws=WS||await refreshWorkspace(); if(!ws||!ws.latest_run){ toast("No run yet - nothing to dispatch"); return }
-  await openRun(ws.latest_run.run_id);
-  setTimeout(()=>{ const i=(typeof DESK!=="undefined"?DESK:[]).findIndex(f=>f.payment_id===pid);
-    const card=document.querySelectorAll(".deskcard")[i<0?0:i];
-    if(card){ card.scrollIntoView({behavior:"smooth",block:"center"}); card.classList.remove("flashcard"); void card.offsetWidth; card.classList.add("flashcard"); const inp=card.querySelector("input"); if(inp) inp.focus(); }
-  },650);
+  goMailFor("disputes",pid);
 }
 async function loadAudit(){
   const out=$("audit-out"); if(!out)return;
@@ -652,7 +650,7 @@ async function bootAuto(){
     // batch has resolved by now, so one last refresh leaves every number
     // on the page describing the bootstrap run.
     setTimeout(async()=>{ await refreshWorkspace(); await refreshDash(); },1500);
-    toast("Demo case loaded and run once - the numbers on this page are that run's real results. Reset to empty (case bar) starts clean.");
+    toast("Demo case staged - the readiness panel shows the real portfolio. One click on Execute runs the six-agent solver in front of you. Reset to empty (case bar) starts clean.");
   }catch(e){}
   finally{
     /* First paint must be complete: Step 1 is the landing view (CURVIEW
@@ -681,11 +679,12 @@ const HUB_TONES=[["strict","Standard Audit"],["contract","Contract Cap"],["escal
 function setHubCat(c){ HUB_CAT=c; if(HUB) renderMailHub(); }
 async function loadMailHub(){
   try{ const h=await api("/api/v1/mail/hub"); HUB=h;
+    if(MAIL_FOCUS){ const items=h[MAIL_FOCUS.cat]||[]; const ix=items.findIndex(d=>d.payment_id===MAIL_FOCUS.pid); if(ix>=0) HUB_SEL[MAIL_FOCUS.cat]=ix; HUB_CAT=MAIL_FOCUS.cat; MAIL_FOCUS=null; }
     const st=$("mail-state"); if(!st) return;
     if(h.state==="empty"){
       st.innerHTML=`<div class="msg"><b>No active ledger loaded.</b> Load a case or upload CSVs and the mail that case generates appears here. <button class="btn" style="margin-left:10px" onclick="loadCase('seed',this)">Load demo case</button></div>`;
     } else if(h.state==="loaded_not_run"){
-      st.innerHTML=`<div class="msg"><b>Case loaded, not run yet.</b> Run it from Step 2 and the mail it generates appears here.</div>`;
+      st.innerHTML=stagedGateHtml("mail streams");
     } else st.innerHTML="";
     renderMailHub(); renderHubOutbox(h);
   }catch(e){ toast(e.message) }

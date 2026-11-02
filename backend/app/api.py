@@ -162,7 +162,15 @@ def _workspace_state(repo):
     what the latest run did, and what is waiting for a human."""
     pending = repo.pending_payments()
     runs = repo.list_runs(1)
-    return {"case": repo.get_meta("active_case"),
+    case = repo.get_meta("active_case")
+    # v31 two-stage lifecycle: a loaded case is STAGED until an explicit
+    # run executes it. Loading a case clears prior runs, so the state is
+    # exact: case + no run = staged; case + run = executed.
+    run_status = "empty" if not case else ("executed" if runs else "staged")
+    return {"case": case,
+            "run_status": run_status,
+            "open_invoice_total_cents": sum(i.gross_cents for i in repo.open_invoices()),
+            "staged_payment_total_cents": sum(pp.amount_cents for pp in repo.all_payments()),
             "open_invoices": len(repo.open_invoices()),
             "staged_payments": len(repo.all_payments()),
             "all_payments": [asdict(p) for p in repo.all_payments()],
@@ -260,19 +268,53 @@ def _record_settlement_drafts(repo, run):
     except Exception:
         pass
 
+def _finish_run_outputs(repo, run):
+    """The sixth pipeline stage, measured where it happens: composing the
+    run's outputs (settlement drafts in the outbox; SAP clearing documents
+    and the brief compose from the same stored facts). The Briefing Agent's
+    step is updated with the real elapsed time and what it produced, so
+    the agent strip never shows an invented number."""
+    import time as _t
+    run_id = (run or {}).get("run_id")
+    if not run_id: return
+    before = len(repo.list_outbox(1000))
+    _t0 = _t.perf_counter()
+    _record_settlement_drafts(repo, run)
+    ms = round((_t.perf_counter() - _t0) * 1000, 2)
+    try:
+        steps = {st["agent"]: st for st in repo.steps_for_run(run_id)}
+        ev = dict((steps.get("Briefing Agent") or {}).get("evidence") or {})
+        ev["settlement_drafts_recorded"] = len(repo.list_outbox(1000)) - before
+        ev["reading"] = ("Settlement drafts were composed and timed here; SAP clearing "
+                         "documents and the case brief compose on read from this run's "
+                         "stored facts - nothing pre-written, nothing cached.")
+        repo.update_step(run_id, "Briefing Agent", "COMPLETED", ms, ev)
+    except Exception:
+        pass
+
 @app.post("/api/v1/cases/{cid}/load")
 def load_case(cid: str, ctx=Depends(auth_context)):
     need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
     pays = _load_case(repo, cid, f"api:{ctx['role']}")
-    # Loading a case runs it, in the same call: no page may ever sit on
-    # a loaded-but-unrun case showing dashes where the outcome belongs.
-    # The run uses the case's own policy (demo hold, pack grading
-    # override) exactly as a manual batch would.
-    run = run_batch(repo, pays, _policy_for(repo, ctx["tenant_id"], None),
-                    "autorun-" + uuid.uuid4().hex[:10], actor=f"api:{ctx['role']}")
-    _record_settlement_drafts(repo, run)
+    # v31: loading STAGES the case only. Execution is an explicit act
+    # (POST /api/v1/workspace/run or the Run page's live stream), so a
+    # reviewer sees the staged portfolio first and watches it solve.
     return {"workspace": _workspace_state(repo), "payments": [asdict(p) for p in pays],
-            "run": run}
+            "run": None}
+
+@app.post("/api/v1/workspace/run")
+def workspace_run(ctx=Depends(auth_context)):
+    """Execute the staged workspace: every staged payment through the
+    batch engine under the effective policy (the case's own overrides
+    included), with the run's outputs composed and timed."""
+    need(ctx, "run"); repo = repo_for(ctx["tenant_id"])
+    pays = repo.all_payments()
+    if not pays:
+        raise HTTPException(409, "nothing staged - load a case or stage payments first")
+    run = run_batch(repo, pays, _policy_for(repo, ctx["tenant_id"], None),
+                    "wsrun-" + uuid.uuid4().hex[:10], actor=f"api:{ctx['role']}")
+    _finish_run_outputs(repo, run)
+    return {"run": run, "workspace": _workspace_state(repo)}
 
 @app.post("/api/v1/workspace/reset")
 def workspace_reset(ctx=Depends(auth_context)):
@@ -471,7 +513,7 @@ def batches(body: BatchIn, ctx=Depends(auth_context)):
     pays = [_pay(p) for p in body.payments]
     for p in pays: repo.add_payment(p, payment_fingerprint(p))
     run = run_batch(repo, pays, pol, body.idempotency_key, actor=f"api:{ctx['role']}")
-    _record_settlement_drafts(repo, run)
+    _finish_run_outputs(repo, run)
     return run
 
 @app.post("/api/v1/payments/import")
@@ -494,7 +536,7 @@ def import_payments(payload: dict, ctx=Depends(auth_context)):
     run = run_batch(repo, all_pays, pol, payload.get("idempotency_key") or ("csv-" + _uuid.uuid4().hex[:10]),
                     actor=f"api:{ctx['role']}") if all_pays else None
     if run:
-        _record_settlement_drafts(repo, run)
+        _finish_run_outputs(repo, run)
     return {"imported": len(out["payments"]), "mapping": out["mapping"], "errors": out["errors"],
             "fingerprint": out["fingerprint"], "run": run}
 
@@ -663,7 +705,7 @@ def load_custom_case(payload: dict, ctx=Depends(auth_context)):
     # Same rule as a named case: loading runs it in the same call.
     run = run_batch(repo, pays, _policy_for(repo, ctx["tenant_id"], None),
                     "autorun-" + uuid.uuid4().hex[:10], actor=f"api:{ctx['role']}")
-    _record_settlement_drafts(repo, run)
+    _finish_run_outputs(repo, run)
     return {"workspace": _workspace_state(repo), "payments": [asdict(p) for p in pays],
             "run": run}
 
@@ -740,7 +782,7 @@ def run_stream(body: StreamIn, ctx=Depends(auth_context)):
         try:
             run = run_batch(repo, payments, pol, "live-" + uuid.uuid4().hex[:10],
                             actor=f"api:{ctx['role']}", on_event=q.put)
-            _record_settlement_drafts(repo, run)
+            _finish_run_outputs(repo, run)
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
         finally:

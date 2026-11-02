@@ -110,7 +110,7 @@ textarea.csv{font-family:var(--mono);font-size:12.5px}
 #chatpanel .chatlog{overflow-y:auto;padding:10px 14px;flex:1}
 #chatpanel .cp-input{display:flex;gap:8px;padding:10px 14px 14px;border-top:1px solid var(--line)}
 #chatpanel .cp-input input{flex:1}
-#toast{position:fixed;bottom:22px;right:22px;background:#2b2b2b;color:#fff;padding:12px 18px;border:1px solid var(--line2);border-radius:3px;font-size:13.5px;opacity:0;pointer-events:none;transition:.25s;max-width:420px;z-index:50;box-shadow:0 18px 50px rgba(0,0,0,.55)}
+#toast{position:fixed;bottom:20px;right:84px;background:#2b2b2b;color:#fff;padding:12px 18px;border:1px solid var(--line2);border-radius:3px;font-size:13.5px;opacity:0;pointer-events:none;transition:.25s;max-width:380px;z-index:50;box-shadow:0 18px 50px rgba(0,0,0,.55)}
 #toast.show{opacity:1}
 .detail{background:var(--bg2);border:1px solid var(--line);border-radius:3px;padding:13px 15px;margin:8px 0;font-size:13px;line-height:1.6}
 .verdict{padding:13px 16px;border-radius:3px;font-weight:650;font-size:14.5px;margin:10px 0}
@@ -433,3 +433,22 @@ main{padding-bottom:78px}
 body.boot .ribbon .v,body.boot .cards .v{color:transparent;background:linear-gradient(90deg,#232323 25%,#303030 50%,#232323 75%);background-size:200% 100%;animation:shim 1.15s infinite;border-radius:2px}
 #appr-out tr{transition:opacity .3s}
 @media (prefers-reduced-motion: reduce){.skl i,.skeleton-line,.skeleton-card,.spin,#loadbar.on::before,.row-highlight-flash{animation:none !important}}
+
+/* v31: staged-lifecycle surfaces */
+.gatecard{border:1px solid var(--line);background:var(--panel);padding:18px;margin:0 0 14px}
+.gatecard b{font-size:15px}
+.readybox{border:1px solid var(--line);background:var(--panel);padding:14px 16px}
+.nextstep{display:flex;justify-content:flex-end;padding:18px 0 6px}
+.mutbar{margin:10px 0;padding:10px 12px;border:1px dashed var(--line);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+
+/* v32: declutter + fold fixes */
+.casebar .cc{min-width:110px}
+.casebar .cc .v{white-space:nowrap}
+.navrow{padding-bottom:96px}
+.jsonbox{max-height:150px;overflow:auto}
+details.agentref{margin-top:12px;border:1px solid var(--line);padding:10px 12px}
+details.agentref summary{cursor:pointer;font:600 12px var(--mono);letter-spacing:.05em;color:var(--mut)}
+details.agentref summary:hover{color:#fff}
+details.agentref table{margin-top:10px}
+
+.casebar .cc:first-child .v{white-space:normal}

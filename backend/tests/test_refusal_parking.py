@@ -14,6 +14,7 @@ client = TestClient(api_mod.app, raise_server_exceptions=False)
 def _seed():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")  # v31: execution is explicit
     return client.get("/api/v1/approvals").json()
 
 

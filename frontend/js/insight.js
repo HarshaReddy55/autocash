@@ -63,7 +63,7 @@ async function loadForecast(){ fillInfo(); renderFcDisputes();
   try{const f=await api("/api/v1/forecast");const c=await api("/api/v1/collections");
     const stEl=$("fc-state");
     if(f.state==="empty"||f.state==="loaded_not_run"){
-      if(stEl) stEl.innerHTML=`<div class="msg">${f.state==="empty"?"<b>No active ledger loaded.</b> Load a case or upload CSVs to compute cash forecast.":"<b>Case loaded, not run yet.</b> The forecast computes from the post-reconciliation ledger - run the case and this page fills in."}</div>`;
+      if(stEl) stEl.innerHTML=f.state==="empty"?`<div class="msg"><b>No active ledger loaded.</b> Load a case or upload CSVs to compute cash forecast.</div>`:stagedGateHtml("forecast");
       $("fc").innerHTML=""; $("col").innerHTML=""; $("fc-cust").innerHTML=""; $("fc-drill").innerHTML="";
       ["fc-k-open","fc-k-30","fc-k-hz","fc-k-risk"].forEach(id=>{const e=$(id); if(e)e.textContent="-"});
       return;
@@ -121,6 +121,8 @@ async function fcWhatif(){
   }catch(e){toast(e.message)}
 }
 async function loadEval(){ fillInfo();
+  await refreshWorkspace();
+  if(WS&&WS.run_status==="staged"){ $("eval-out").innerHTML=stagedGateHtml("evaluations"); return }
   try{const ev=await api("/api/v1/evaluations");
     let caseGrade="";
     const ws=await refreshWorkspace();
@@ -144,7 +146,7 @@ async function loadHealth(){ fillInfo();
     $("health-out").innerHTML=`<div class="cards">
     <div class="card"><div class="k">Service status <span data-info="svcstatus"></span></div><div class="v" style="font-size:20px;padding-top:5px">${pill(h.status==="ok"?"Healthy":"Degraded",h.status==="ok"?"ok":"bad")} ${pill(r.ready?"Ready":"Not ready",r.ready?"ok":"bad")}</div><div class="n">Readiness gate checked live</div></div>
     <div class="card"><div class="k">Auth mode <span data-info="authmode"></span></div><div class="v" style="font-size:20px;padding-top:5px">${esc(h.auth)}</div><div class="n">${h.auth==="dev-open"?"Demo posture: no keys issued yet":"API keys enforced per tenant"}</div></div>
-    <div class="card"><div class="k">AI layer <span data-info="ailayer"></span></div><div class="v" style="font-size:20px;padding-top:5px">${h.gemini_configured?"Gemini live":"Deterministic"}</div><div class="n">Parser mode is always labelled in its output</div></div>
+    <div class="card"><div class="k">AI layer <span data-info="ailayer"></span></div><div class="v" style="font-size:15.5px;padding-top:7px;line-height:1.35">${aiModeLabel(h.gemini_configured,h.gemini_last_error)}</div><div class="n">Parser mode is always labelled in its output; the raw provider state stays in diagnostics below</div></div>
     <div class="card"><div class="k">Data directory <span data-info="datadir"></span></div><div class="v" style="font-size:20px;padding-top:5px">${esc(h.data_dir)}</div><div class="n">Per-tenant SQLite stores</div></div></div>
     <div class="panel"><h3>Model quality (held-out, time-ordered) <span data-info="modelq"></span></h3><div class="d">Trained on synthetic history with a learnable signal; graded on rows the models never trained on.</div>
     <table><tr><th>Model <span data-info="model"></span></th><th>Metric <span data-info="metric"></span></th><th>Value <span data-info="mval"></span></th><th>Reference <span data-info="ref"></span></th></tr>
@@ -253,7 +255,8 @@ async function loadSap(){
     const d=await api("/api/v1/erp/run-documents");
     SAP_DOCS=d;
     if(!d.run_id||!d.documents.length){
-      st.innerHTML=`<div class="emptycase"><b>No posting documents yet.</b><br>The latest run has no cleared payments. Load a case in Step 1, let it run, and every cleared payment's DZ document is generated here.</div>`;
+      if(WS&&WS.run_status==="staged"){ st.innerHTML=stagedGateHtml("SAP clearing documents"); $("sap-t-docs").textContent="0"; $("sap-t-total").textContent="$0.00"; $("sap-t-reserve").textContent="$0.00"; $("sap-chips").innerHTML=""; $("sap-table").innerHTML=""; $("sap-payload").textContent=""; $("sap-reserve").innerHTML=""; return }
+      st.innerHTML=`<div class="emptycase"><b>No posting documents yet.</b><br>The latest run has no cleared payments. Load a case, run it, and every cleared payment's DZ document is generated here.</div>`;
       $("sap-t-docs").textContent="0"; $("sap-t-total").textContent="$0.00";
       $("sap-t-reserve").textContent="$0.00";
       $("sap-chips").innerHTML=""; $("sap-table").innerHTML="<small>No documents.</small>";
@@ -299,12 +302,12 @@ async function loadScore(){
   const el=$("score-kpis"); if(!el) return;
   const w=WS||await refreshWorkspace();
   if(!w||!w.case){
-    el.innerHTML=`<div class="emptycase"><b>Empty workspace.</b><br>Step 6 reports only what the agent has actually done. Load a case in Step 1 and this scorecard fills from its stored runs - it never shows placeholder numbers.</div>`;
+    el.innerHTML=`<div class="emptycase"><b>Empty workspace.</b><br>This page reports only what the agent has actually done. Load a case and this scorecard fills from its stored runs - it never shows placeholder numbers.</div>`;
     return;
   }
   try{
     const runs=await api("/api/v1/runs");
-    if(!runs.length){ el.innerHTML=`<div class="emptycase"><b>No runs yet.</b><br>The case is loaded; run it from Step 2 and the scorecard computes from the stored run.</div>`; return }
+    if(!runs.length){ el.innerHTML=`<div class="emptycase"><b>No runs yet.</b><br>The case is staged; run it from Run Reconciliation and the scorecard computes from the stored run.</div>`; return }
     const latest=runs[0];
     const matches=await api(`/api/v1/runs/${latest.run_id}/matches`);
     const decided=matches.length, staged=Math.max(w.staged_payments, decided);

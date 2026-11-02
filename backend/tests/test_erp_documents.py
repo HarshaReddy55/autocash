@@ -19,6 +19,7 @@ def test_run_documents_empty_before_any_case():
 def test_run_documents_for_the_demo_case():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")  # v31: execution is explicit
     d = client.get("/api/v1/erp/run-documents").json()
     assert d["run_id"]
     # one document per auto-posted payment of the canonical run

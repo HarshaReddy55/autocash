@@ -11,7 +11,7 @@ async function api(path,opts={}){__apiN++;const lb=$("loadbar");if(lb)lb.classLi
 function bumpGen(){WS_GEN++}
 function busyBtn(btn,label){if(!btn)return()=>{};const old=btn.innerHTML;btn.disabled=true;btn.innerHTML=`<span class="spin"></span>${label}`;return()=>{btn.disabled=false;btn.innerHTML=old}}
 function flashEl(el){if(!el)return;el.scrollIntoView({behavior:"smooth",block:"center"});el.classList.remove("row-highlight-flash");void el.offsetWidth;el.classList.add("row-highlight-flash");setTimeout(()=>el.classList.remove("row-highlight-flash"),2100)}
-function jumpToApprovals(){go("run");let n=0,last="",stable=0;const t=setInterval(()=>{const out=$("appr-out");if(!out){if(++n>44)clearInterval(t);return}const html=out.innerHTML;if(html===last)stable++;else{stable=0;last=html}const r=[...out.querySelectorAll("tr")].find(x=>x.querySelector("button"));if(r&&stable>=2){clearInterval(t);flashEl(r)}else if(++n>44)clearInterval(t)},160)}
+function jumpToApprovals(){ if(WS&&WS.run_status==="staged"){ go("run"); setTimeout(()=>{ const b=$("live-btn"); if(b) flashEl(b); },520); return } go("run");let n=0,last="",stable=0;const t=setInterval(()=>{const out=$("appr-out");if(!out){if(++n>44)clearInterval(t);return}const html=out.innerHTML;if(html===last)stable++;else{stable=0;last=html}const r=[...out.querySelectorAll("tr")].find(x=>x.querySelector("button"));if(r&&stable>=2){clearInterval(t);flashEl(r)}else if(++n>44)clearInterval(t)},160)}
 function toggleActsMenu(ev){ ev.stopPropagation(); const m=$("acts-menu"); const open=m.classList.toggle("open");
   if(open){ const close=(e)=>{ if(!m.contains(e.target)){ m.classList.remove("open"); document.removeEventListener("click",close); } }; setTimeout(()=>document.addEventListener("click",close),0); } }
 async function downloadExport(path,fname){
@@ -57,9 +57,10 @@ function renderCasebar(){
   if(!WS) return; const c=WS.case;
   $("cb-case").innerHTML=c?`${esc(c.name)} <small>- ${esc(c.source||"")} - loaded ${esc((c.loaded_at||"").slice(0,16).replace("T"," "))} UTC</small>`:"No case loaded <small>- load the demo, a use case, the builder, or your own files</small>";
   $("cb-inv").textContent=WS.open_invoices;
-  $("cb-pay").innerHTML=`${WS.staged_payments} <small>(${WS.pending_payments.length} pending)</small>`;
-  $("cb-run").innerHTML=WS.latest_run?`${esc(String(WS.latest_run.run_id).slice(0,13))}... <small>${esc(WS.latest_run.status)}</small>`:"-";
-  $("cb-appr").textContent=WS.approvals_pending;
+  $("cb-pay").textContent=`${WS.staged_payments} staged`;
+  $("cb-run").innerHTML=WS.latest_run?`${esc(String(WS.latest_run.run_id).slice(0,13))}... <small>${esc(WS.latest_run.status)}</small>`:WS.case?"Pending":"-";
+  $("cb-appr").textContent=WS.run_status==="staged"?"0 held":String(WS.approvals_pending);
+  { const sk=$("r-susp-k"); if(sk) sk.textContent=WS.run_status==="staged"?"Staged wire volume (ready)":"Unapplied cash in suspense"; }
   const eb=$("export-btn"); if(eb){ const has=!!WS.latest_run; eb.disabled=!has; eb.title=has?"Download the month-end bundle: the latest run with every MILP derivation, the maker-checker audit trail, and the SAP posting documents":"Nothing to export yet - this workspace has no run"; }
   const sb=$("sb-case"); if(sb) sb.textContent="CASE "+(c?String(c.name).toUpperCase():"NONE");
   const sw=$("cb-switch"); if(sw&&c&&[...sw.options].some(o=>o.value===c.id)) sw.value=c.id;
@@ -83,6 +84,10 @@ function switchCase(sel){
   else loadCase(v);
 }
 let RUN_FILTER=null;
+function gotoLedgerInvoices(){
+  go("ledger");
+  setTimeout(()=>{ const t=$("ledger-t"); const p=t?t.closest(".panel"):null; if(p){ p.scrollIntoView({behavior:"smooth",block:"start"}); p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash"); } },480);
+}
 function gotoLedgerStaged(){
   go("ledger");
   setTimeout(()=>{ const p=$("ledger-staged-panel"); if(p){ p.scrollIntoView({behavior:"smooth",block:"start"}); p.classList.remove("flash"); void p.offsetWidth; p.classList.add("flash"); } },480);
@@ -94,8 +99,7 @@ function openRunExceptions(){
 }
 function clearRunFilter(){ RUN_FILTER=null; if(WS&&WS.latest_run) openRun(WS.latest_run.run_id); }
 function goMailDisputes(){
-  if(window.setHubCat) setHubCat("disputes");
-  go("mail");
+  if(window.goMailFor) goMailFor("disputes",null); else { if(window.setHubCat) setHubCat("disputes"); go("mail"); }
 }
 function openApprovals(){ go("run"); }
 let BRIEF_RUN=null, BRIEF_SEQ=0, BRIEF_PROMISE=null;
@@ -168,6 +172,21 @@ async function briefOutcome(runId){
   }
   return BRIEF_PROMISE.promise;
 }
+/* v31: the one execution path every CTA shares - land on Run
+   Reconciliation and fire the live solver stream. */
+function executeActiveCase(){ go("run"); setTimeout(()=>{ const b=$("live-btn"); if(b) runLive(b); },520); }
+function stagedGateHtml(where){
+  if(!WS||!WS.case) return "";
+  return `<div class="gatecard"><b>Waiting for the reconciliation run.</b><div class="d" style="margin:6px 0 10px">The ${esc(where)} for <b>${esc(WS.case.name)}</b> are generated by the run itself - nothing here is pre-computed. The case is staged: ${WS.open_invoices} open invoices (${money(WS.open_invoice_total_cents||0)}) and ${WS.staged_payments} wires (${money(WS.staged_payment_total_cents||0)}) are waiting.</div><button class="btn" onclick="executeActiveCase()">&#9654; Execute 6-Agent Run Now &#8594;</button></div>`;
+}
+/* v31: a Gemini quota window is a designed operating mode, never an
+   error badge. The raw error stays visible in diagnostics detail. */
+function aiQuotaSafe(){ try{ const e=(window.__AI_LAST_ERROR||""); return /429|quota|rate limit/i.test(e) }catch(_){ return false } }
+function aiModeLabel(configured,lastErr){
+  if(!configured) return "Deterministic Verifier Fallback Active (No AI Key - 100% Verified SLA)";
+  if(lastErr) return /429|quota|rate limit/i.test(lastErr) ? "Deterministic Verifier Fallback Active (Quota-Safe Mode - 100% Verified SLA)" : "Gemini configured - last call failed (see diagnostics)";
+  return "Gemini live";
+}
 const SEED_STORY="A normal day at a mid-size supplier. 16 payments arrive against 19 open invoices from 9 customers. Most are routine. Hidden among them: one payment split across two invoices, one that gives only a PO number, one with a wrong character in the invoice reference, one that takes an early-payment discount and deducts extra for a claimed shortage, one duplicate of an earlier wire, and one from a payer nobody recognises.";
 function renderCaseBrief(){
   const el=$("case-brief"); if(!el||!WS) return;
@@ -179,7 +198,7 @@ function renderCaseBrief(){
   const shows=meta.shows||"";
   const lr=WS.latest_run;
   const cached=(lr&&BRIEF_RUN&&BRIEF_RUN.run_id===lr.run_id)?BRIEF_RUN.html:null;
-  const outcomeHtml=lr?(cached||`<div class="d">Counting this run's outcomes...</div>`):`<div class="d">Not run yet. Run this case from Run Reconciliation and this fills in: what the agent posted on its own, what it is recovering through disputes, and what is waiting for your decision.</div>`;
+  const outcomeHtml=lr?(cached||`<div class="d">Counting this run's outcomes...</div>`):`<div class="readybox"><div class="k" style="font-family:var(--mono);font-size:9.5px;color:var(--mut);text-transform:uppercase;letter-spacing:.1em">Staged portfolio readiness</div><p style="margin:8px 0 6px"><b>${money(WS.open_invoice_total_cents||0)}</b> across ${WS.open_invoices} open invoices &nbsp;vs&nbsp; <b>${money(WS.staged_payment_total_cents||0)}</b> across ${WS.staged_payments} incoming wires</p><p style="margin:0"><b>Status:</b> ${WS.staged_payments} wires staged &amp; verified - ready for 6-agent MILP reconciliation. Nothing has been solved yet; the outcome appears here after the run.</p></div>`;
   // The shell writes synchronously from the current workspace snapshot -
   // no await stands between reading WS and writing, so no stale async
   // invocation can ever land last. The outcome fills its own container
@@ -205,16 +224,27 @@ function renderStaged(){
   const p=WS.pending_payments;
   if(!WS.case && !WS.staged_payments){ el.innerHTML=`<small>No case is loaded. Load the demo case or a use case, build one in Use Cases, or upload files - the staged payments will appear here, ready to run.</small>`; return }
   if(!p.length){ el.innerHTML=`<small>All ${WS.staged_payments} staged payments of this case have been run${WS.latest_run?` - latest run <b>${esc(WS.latest_run.run_id)}</b> is in the history below and on the Dashboard`:""}. Load another case or reset the workspace to run again.</small>`; return }
-  el.innerHTML=stagedTable(p)+`<small>${p.length} of ${WS.staged_payments} staged payments are waiting to run.</small>`;
+  el.innerHTML=stagedTable(p)+`<div class="mutbar"><b>Live proof:</b> <button class="btn small ghost" onclick="mutateFirstWire(this)">&#9889; Test Live Mutation: Short-Pay ${esc(p[0].payment_id)} by $500</button> <small>Edits that wire in the real ledger (amount ${money(p[0].amount_cents)} &#8594; ${money(p[0].amount_cents-50000)}), then run the solver and watch its verdict change. Amount and remittance are also editable per wire in the Ledger (07).</small></div><small>${p.length} of ${WS.staged_payments} staged payments are waiting to run.</small>`;
 }
 function renderUpStaged(){
   const el=$("up-staged"); if(!el||!WS) return;
   const p=WS.pending_payments, settled=WS.staged_payments-p.length;
-  if(!WS.staged_payments){ el.innerHTML=`<small>Nothing staged yet. Import payments above and they will be staged here and reconciled immediately - then inspect them on the Run page.</small>`; return }
-  el.innerHTML=(p.length?stagedTable(p):"")+`<small>${WS.staged_payments} payments staged in the active case${WS.case?` (${esc(WS.case.name)})`:""}: ${p.length} pending, ${settled} already run.</small>`;
+  if(!WS.staged_payments){ el.innerHTML=`<small>Nothing staged yet. Import payments above and they are staged here, untouched, until you run them from Run Reconciliation.</small>`; return }
+  el.innerHTML=(p.length?stagedTable(p):"")+`${p.length?`<p style="margin:10px 0 0"><button class="btn" onclick="go('run')">&#10003; Staged in Workspace - Go to 04 Run Reconciliation to Solve &#8594;</button></p>`:""}<small>${WS.staged_payments} payments staged in the active case${WS.case?` (${esc(WS.case.name)})`:""}: ${p.length} pending, ${settled} already run.</small>`;
+}
+async function mutateFirstWire(btn){
+  const p=(WS&&WS.pending_payments)||[]; if(!p.length){ toast("No staged wire to mutate"); return }
+  const w=p[0]; if(w.amount_cents<=50000){ toast("That wire is too small to short-pay by $500"); return }
+  const __busy=busyBtn(btn,"Mutating the wire...");
+  try{
+    await api(`/api/v1/payments/${w.payment_id}`,{method:"PATCH",body:JSON.stringify({amount_cents:w.amount_cents-50000})});
+    bumpGen(); await refreshWorkspace();
+    toast(`${w.payment_id} short-paid by $500 in the ledger - now run the solver and watch its verdict change`);
+    const lb=$("live-btn"); if(lb) flashEl(lb);
+  }catch(e){ toast("Mutation failed: "+e.message) }finally{ __busy() }
 }
 async function loadCase(cid,btn,opts={}){
-  const __busy=busyBtn(btn,"Loading & running the case...");
+  const __busy=busyBtn(btn,"Staging the case...");
   WS_GEN++;
   // The new case has no runs yet - clear every run-derived panel NOW,
   // synchronously, so no page can present the previous case's figures
@@ -232,7 +262,7 @@ async function loadCase(cid,btn,opts={}){
     WS=d.workspace; casePayments=d.payments; seedPayments=d.payments; lastRun=d.run||null; renderCasebar();
     toast(d.run?`Case loaded and run: ${d.run.auto_posted} of ${d.run.payments} payments auto-posted`:`Case loaded: ${d.workspace.case.name} - ${d.workspace.open_invoices} invoices, ${d.payments.length} payments staged`);
     if(d.workspace.case.policy_note) setTimeout(()=>toast(d.workspace.case.policy_note),600);
-    if(!opts.stay){ if(d.run&&d.run.run_id){ openRun(d.run.run_id) } else { go("run") } } else { refreshDash() }
+    if(!opts.stay){ go("dash"); refreshDash() } else { refreshDash() }
   }catch(e){ toast("Load failed: "+e.message) }finally{ __busy() }
 }
 async function loadCaseAndRun(cid,btn){

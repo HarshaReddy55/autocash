@@ -10,9 +10,12 @@ client = TestClient(api_mod.app)
 
 def _seed_run():
     client.post("/api/v1/workspace/reset")
-    r = client.post("/api/v1/cases/seed/load")  # v21: loading runs the case
+    r = client.post("/api/v1/cases/seed/load")  # v31: loading stages the case
     assert r.status_code == 200, r.text
-    return r.json()["run"]
+    assert r.json()["run"] is None
+    rr = client.post("/api/v1/workspace/run")
+    assert rr.status_code == 200, rr.text
+    return rr.json()["run"]
 
 
 def test_run_agents_pipeline_recorded():
@@ -29,7 +32,9 @@ def test_run_agents_pipeline_recorded():
     assert by["Matching Agent"]["evidence"]["exact_matches"] >= 10
     assert by["Matching Agent"]["evidence"]["milp_latency_ms_total"] > 0
     assert by["Policy Agent"]["evidence"]["held_for_maker_checker"] == 2  # P7 + P16
-    assert by["Briefing Agent"]["status"] == "ON_DEMAND"
+    # v31: the briefing/output stage is measured at run completion
+    assert by["Briefing Agent"]["status"] == "COMPLETED"
+    assert by["Briefing Agent"]["evidence"]["settlement_drafts_recorded"] == 10
 
 
 def test_approval_decision_carries_fingerprint():

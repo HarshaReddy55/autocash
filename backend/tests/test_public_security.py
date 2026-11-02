@@ -31,7 +31,8 @@ def test_session_workspaces_are_isolated():
 
 def test_export_bundle_and_csv():
     client.post("/api/v1/workspace/reset")
-    client.post("/api/v1/cases/seed/load")  # v21: loading runs the case
+    client.post("/api/v1/cases/seed/load")  # v31: loading stages the case
+    client.post("/api/v1/workspace/run")
     resp = client.get("/api/v1/export/bundle")
     assert resp.status_code == 200
     assert "attachment" in resp.headers.get("content-disposition", "")

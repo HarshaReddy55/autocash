@@ -21,13 +21,32 @@ def _load():
     return r.json()
 
 
-def test_load_runs_the_case_atomically():
+def test_load_stages_then_explicit_run_executes():
+    # v31 two-stage lifecycle: loading stages the case (nothing solved,
+    # nothing pending decision), execution is a separate explicit act.
     d = _load()
-    assert d["run"]["auto_posted"] == 10
+    assert d["run"] is None
     ws = d["workspace"]
+    assert ws["run_status"] == "staged"
+    assert ws["latest_run"] is None
+    assert len(ws["pending_payments"]) == 16
+    assert ws["approvals_pending"] == 0
+    rr = client.post("/api/v1/workspace/run")
+    assert rr.status_code == 200, rr.text
+    run = rr.json()["run"]
+    assert run["auto_posted"] == 10
+    ws = rr.json()["workspace"]
+    assert ws["run_status"] == "executed"
     assert ws["latest_run"] is not None
     assert ws["pending_payments"] == []
     assert ws["approvals_pending"] == 5
+
+
+def _load_and_run():
+    _load()
+    rr = client.post("/api/v1/workspace/run")
+    assert rr.status_code == 200, rr.text
+    return rr.json()["run"]
 
 
 def test_forecast_state_rule_and_residual_basis():
@@ -38,6 +57,9 @@ def test_forecast_state_rule_and_residual_basis():
         "customer": "Cascade Chemicals", "shift_days": -7}).status_code == 404
     assert client.get("/api/v1/collections").json() == []
     _load()
+    f = client.get("/api/v1/forecast").json()
+    assert f["state"] == "loaded_not_run"  # v31: staged is a first-class state
+    client.post("/api/v1/workspace/run")
     f = client.get("/api/v1/forecast").json()
     assert f["state"] == "ready" and f["weeks"]
     ids = {d["invoice_id"] for d in f["invoices"]}
@@ -52,7 +74,7 @@ def test_forecast_state_rule_and_residual_basis():
 
 
 def test_mail_hub_four_categories_from_one_run():
-    run_id = _load()["run"]["run_id"]
+    run_id = _load_and_run()["run_id"]
     h = client.get("/api/v1/mail/hub").json()
     assert h["state"] == "ready"
     assert any(d["payment_id"] == "P3" for d in h["disputes"])
@@ -77,7 +99,7 @@ def test_mail_hub_empty_state():
 
 
 def test_approval_generates_its_settlement_confirmation():
-    _load()
+    _load_and_run()
     appr = client.get("/api/v1/approvals").json()
     p7 = next(a for a in appr if a["payment_id"] == "P7")
     r = client.post(f"/api/v1/matches/{p7['match_id']}/decision",

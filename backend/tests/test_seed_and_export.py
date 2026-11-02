@@ -16,6 +16,9 @@ def test_export_bundle_refuses_a_workspace_with_no_run():
     assert r.status_code == 409, r.text
     client.post("/api/v1/cases/seed/load")
     r = client.get("/api/v1/export/bundle")
+    assert r.status_code == 409, r.text  # v31: staged is not a run - nothing to export yet
+    client.post("/api/v1/workspace/run")
+    r = client.get("/api/v1/export/bundle")
     assert r.status_code == 200, r.text
 
 
