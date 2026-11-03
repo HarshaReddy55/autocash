@@ -263,9 +263,28 @@ My earlier verification had checked the browser's preview builder,
 which was correct, and called the document done. Verify through the
 surface that ships.
 
+## 15. The suite that passed slowly and failed fast
+
+The v41 push came back red from CI on code that had passed every test
+on my machine an hour earlier. Reproducing the CI run exactly (same
+command, same working directory, no local environment) produced the
+failure in nineteen seconds: a 429 from the product's own rate
+limiter. Every unauthenticated test request shares one anonymous
+bucket capped at 300 requests a minute, and the suite issues more
+than that. Run slowly, the requests spread across several one-minute
+windows and everything passes. Run at CI speed, they land inside a
+single window and the last tests fail. The suite now sets its own
+high ceiling in a conftest file, while the rate limiter's dedicated
+test keeps its own limit of three and still proves the limiter bites.
+A test suite is a system too, and its environment is part of its
+truth: when CI and local disagree, reproduce CI exactly before
+blaming the code.
+
 None of these problems were exotic. They are the ordinary failures of
 real software: a tolerance, a cache, a missing tag, a setting that was
 never applied, a budget that was not there. What I am proud of is not
 that I avoided them. It is that each one left the product stricter
 than it found it, and that the evidence for every claim in this pack
 can be produced from the product itself, on request.
+
+Version 3.0 | 3 Nov 2026 | Owner: C. Harsha Vardhana Reddy
