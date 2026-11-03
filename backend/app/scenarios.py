@@ -149,8 +149,8 @@ SCENARIOS = [
     {
         "id": "partial-residual",
         "title": "Partial payment with an unexplained residual",
-        "story": "BluePeak Electronics pays $11,000 against an $18,500 invoice and explains nothing. The engine posts the part it can prove, states the $7,500 still unexplained, and raises a review exception that shows what else this cash could have been - instead of quietly writing it off or forcing a wrong match. Everything else in the batch is routine: a 16-invoice ledger and ten clean wires that post while one payment waits for a human.",
-        "shows": "Part payments: how the engine posts what it can prove, accounts for the rest, and explains its thinking instead of guessing.",
+        "story": "BluePeak Electronics pays $11,000 against an $18,500 invoice and explains nothing. The engine holds the part it can prove for a person's approval, states the $7,500 still unexplained, and raises a review exception that shows what else this cash could have been - instead of quietly writing it off or forcing a wrong match. Everything else in the batch is ordinary traffic on a 16-invoice ledger: ten further wires, partials, a rounding deduction and a wrong reference among them, worked through while one payment waits for a human.",
+        "shows": "Part payments: how the engine holds what it can prove for approval, accounts for the rest, and explains its thinking instead of guessing.",
         "build": lambda: _case(
             [_inv("S5", 1, "BluePeak Electronics", 1850000, po_number="PO-22", age_days=12, due_in_days=-12),
              _inv("S5", 2, "BluePeak Electronics", 625000, po_number="PO-23", age_days=3, due_in_days=3)],

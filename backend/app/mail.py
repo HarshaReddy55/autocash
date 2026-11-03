@@ -83,7 +83,7 @@ def reminder_draft(inv):
                 f"{when}.\n\n"
                 f"If payment is already on its way, thank you - no action is needed. "
                 f"If anything on the invoice needs clarification, reply to this mail and we will "
-                f"resolve it the same day. If payment will be later than planned, a short note "
+                f"resolve it with you directly. If payment will be later than planned, a short note "
                 f"with the expected date helps us plan on our side.\n\n"
                 f"{facts}"
                 f"\nThank you,\nAccounts Receivable")
@@ -95,53 +95,85 @@ def reminder_draft(inv):
                 f"Please arrange payment this week, or reply with the payment date and the "
                 f"remittance breakdown so we can apply the cash when it lands. If a document "
                 f"is missing from our side - a signed proof of delivery, a corrected invoice - "
-                f"tell us today and we will send it the same day.\n\n"
+                f"tell us and we will send it straight away.\n\n"
                 f"{facts}"
                 f"\nAccounts Receivable")
     else:
-        subject = f"Final notice before credit hold - invoice {inv.invoice_id} for {_money(inv.gross_cents)}, {overdue} days overdue"
+        subject = f"Final notice - invoice {inv.invoice_id} for {_money(inv.gross_cents)}, {overdue} days overdue"
         body = (f"Dear Accounts Payable team,\n\n"
-                f"Invoice {inv.invoice_id} for {_money(inv.gross_cents)} {when}. Despite earlier "
-                f"reminders it remains unpaid, and no dispute has been raised against it.\n\n"
-                f"Unless payment or a written dispute reaches us within 5 business days, this "
-                f"account moves to credit hold: new orders will not be released until the "
-                f"balance is cleared. If payment is already in transit, send the remittance "
-                f"advice today and the hold will not be applied.\n\n"
+                f"Invoice {inv.invoice_id} for {_money(inv.gross_cents)} {when}, and it remains "
+                f"unpaid, with no dispute raised against it.\n\n"
+                f"Please treat this as urgent: payment, or a written dispute, is needed now, and "
+                f"unresolved balances may affect future order releases. If payment is already "
+                f"in transit, send the remittance "
+                f"advice today so we can apply it on arrival.\n\n"
                 f"{facts}"
                 f"\nAccounts Receivable - Collections")
     return {"subject": subject, "body": body, "tone": tone, "tone_label": tone_label}
 
 
-def settlement_draft(payer, payment_id, lines, erp_document_id=None):
+def settlement_draft(payer, payment_id, lines, erp_document_id=None,
+                     remaining_by_invoice=None):
     """Category-3 mail: the settlement advice for one cleared payment.
-    Every figure comes from the match's own lines - the invoices it
-    closed, the discount it was allowed, and the $0.00 balance each
-    invoice is left with - plus the SAP clearing reference when the
-    maker-checker approval issued one."""
+    Every figure comes from the match's own record: the applied amount
+    per invoice, and the balance each invoice is genuinely left with -
+    a part-paid invoice stays open at its reduced balance and the draft
+    says so. remaining_by_invoice carries the approval decision's own
+    partial-application facts when the draft follows an approval; for
+    an auto-posted (exact) match every balance is $0.00 by definition.
+    The clearing reference is AutoCash's own staged posting pack for
+    SAP S/4HANA, and the draft names it as such."""
     gross = sum(l.get("gross_cents", 0) for l in lines)
     disc = sum(l.get("discount_cents", 0) or 0 for l in lines)
-    net = sum(l.get("net_cents", 0) for l in lines)
+
+    def _applied(l):
+        # A stored line's net_cents is the invoice's full net; for a
+        # part-paid invoice the decision's remaining balance is the
+        # truth, and the applied part is what is left of the line.
+        if remaining_by_invoice and l["invoice_id"] in remaining_by_invoice:
+            return max(0, l.get("gross_cents", 0) - (l.get("discount_cents", 0) or 0)
+                       - remaining_by_invoice[l["invoice_id"]])
+        return l.get("net_cents", 0)
+
+    net = sum(_applied(l) for l in lines)
+
+    def _remaining(l):
+        if remaining_by_invoice and l["invoice_id"] in remaining_by_invoice:
+            return remaining_by_invoice[l["invoice_id"]]
+        return max(0, l.get("gross_cents", 0) - (l.get("discount_cents", 0) or 0)
+                   - l.get("net_cents", 0))
+
     rows = "\n".join(
         f"- {l['invoice_id']}: {_money(l.get('gross_cents', 0))} gross"
         + (f", {_money(l.get('discount_cents', 0) or 0)} early-payment discount applied"
            if l.get("discount_cents") else "")
-        + f", {_money(l.get('net_cents', 0))} applied - remaining balance $0.00"
+        + f", {_money(_applied(l))} applied - remaining balance {_money(_remaining(l))}"
         for l in lines)
-    doc = (f"SAP S/4HANA clearing document: {erp_document_id} (document type DZ, customer payment)"
+    open_lines = [l for l in lines if _remaining(l) > 0]
+    doc = (f"AutoCash clearing document: {erp_document_id} (document type DZ, customer payment) - "
+           "a staged posting pack for SAP S/4HANA, balanced debits = credits"
            if erp_document_id else
-           "The balanced SAP S/4HANA posting document (type DZ) for this payment is generated "
-           "in AutoCash and opens from the match evidence and the Outbound Mail Hub.")
-    subject = (f"Settlement advice - payment {payment_id} applied, "
-               f"{len(lines)} invoice(s) closed, {_money(net)}")
+           "The balanced posting document (type DZ) for this payment is generated "
+           "in AutoCash as a staged pack for SAP S/4HANA and opens from the match "
+           "evidence and the Outbound Mail Hub.")
+    if open_lines:
+        subject = (f"Settlement advice - payment {payment_id} applied in part, "
+                   f"{_money(net)}; {len(open_lines)} invoice(s) remain open")
+        head = (f"Your payment {payment_id} has been applied as follows. Invoices "
+                f"with a balance remaining stay open for that amount:\n\n")
+    else:
+        subject = (f"Settlement advice - payment {payment_id} applied, "
+                   f"{len(lines)} invoice(s) closed, {_money(net)}")
+        head = (f"Your payment {payment_id} has been applied in full. The invoices below are "
+                f"closed, each with a remaining balance of $0.00:\n\n")
     body = (f"Dear {payer} Accounts Payable team,\n\n"
-            f"Your payment {payment_id} has been applied in full. The invoices below are "
-            f"closed, each with a remaining balance of $0.00:\n\n"
+            f"{head}"
             f"{rows}\n\n"
             f"Total applied: {_money(net)} against {_money(gross)} gross"
             + (f", including {_money(disc)} of agreed early-payment discount.\n" if disc else ".\n")
             + f"{doc}\n\n"
             f"If any line does not agree with your records, reply to this mail quoting "
-            f"payment {payment_id} and we will reconcile it the same day.\n\n"
+            f"payment {payment_id} and we will reconcile it with you directly.\n\n"
             f"Thank you,\nAccounts Receivable - AutoCash")
     return {"subject": subject, "body": body}
 

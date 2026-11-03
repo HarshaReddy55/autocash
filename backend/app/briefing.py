@@ -100,7 +100,7 @@ def run_brief(repo, run_id, client=None):
 _TONE_OPEN = {
     "strict": "We are disputing this deduction formally and ask for reversal or evidence within 10 business days.",
     "contract": "Under our agreed terms, a deduction of this kind requires prior written authorisation, which was not given for this shipment.",
-    "escalate": "If this is not resolved within 5 business days we will escalate the claim to VP level on both sides.",
+    "escalate": "If this remains unresolved we will escalate the claim to senior level on both sides.",
 }
 
 
@@ -113,7 +113,7 @@ def _dispute_template(tone, f):
             f"(ERP reason code {f.get('reason_code', '')}). "
             f"{'The proof of delivery for this shipment was signed clean, and the deduction does not match the agreed terms.' if f.get('pod_clean') else 'We are reviewing the delivery evidence for this shipment, and the deduction does not match the agreed terms.'}\n\n"
             f"{_TONE_OPEN.get(tone, _TONE_OPEN['strict'])}\n\n"
-            f"Our assessment: win probability {f.get('win_probability', '')}, expected recovery "
+            f"Our estimate (an internal heuristic, not a guarantee): win probability {f.get('win_probability', '')}, expected recovery "
             f"${float(f.get('expected_recovery_usd') or 0):,.2f}. We would rather close this quickly than "
             f"escalate it.\n\nRegards,\nAccounts Receivable - AutoCash dispute desk\n"
             f"(Draft composed from the case record - review before sending.)")
@@ -122,7 +122,7 @@ def _dispute_template(tone, f):
 _REBUTTALS = {
     "damage": ("The proof of delivery for this shipment was signed clean at handover, with no damage noted. "
                "A concealed-damage claim needs the receiving inspection report and photos, shared inside the "
-               "contract window. Please share them and we will review the same day. Until then the deduction "
+               "contract window. Please share them and we will review them on receipt. Until then the deduction "
                "of {claimed} stays disputed in full."),
     "discount_timing": ("The early-pay discount in our agreed terms runs from the invoice date, not the dock "
                         "receipt date. On that basis the discount was not earned on this invoice and the "
@@ -137,18 +137,18 @@ def _rebuttal_template(f):
         offer = float(f.get("offer_usd") or 0)
         expected = float(f.get("expected_recovery_usd") or 0)
         if offer >= expected:
-            return (f"Thank you - we accept ${offer:,.2f} to close this ticket today. Our assessed expected "
+            return (f"Thank you - we accept ${offer:,.2f} to close this ticket today. Our estimated expected "
                     f"recovery was ${expected:,.2f}, so your offer is fair. Please treat this dispute as "
                     f"settled on payment of the agreed sum.")
-        return (f"Thank you for the offer. We cannot accept ${offer:,.2f}. Our assessed expected recovery on "
-                f"this claim is ${expected:,.2f} (win probability {f.get('win_probability', '')}{' on a clean signed POD' if f.get('pod_clean') else ''}, "
+        return (f"Thank you for the offer. We cannot accept ${offer:,.2f}. Our estimated expected recovery on "
+                f"this claim is ${expected:,.2f} (estimated win probability {f.get('win_probability', '')}{' on a clean signed POD' if f.get('pod_clean') else ''}, "
                 f"claim {claimed}). We will settle today at ${expected:,.2f}, or proceed with "
                 f"the full dispute for {claimed}.")
     if kind == "damage" and not f.get("pod_clean"):
         # The signed-clean assertion is only made when the record
         # supports it; the rest of the rebuttal stands on its own.
         return ("A concealed-damage claim needs the receiving inspection report and photos, shared inside the "
-                "contract window. Please share them and we will review the same day. Until then the deduction "
+                "contract window. Please share them and we will review them on receipt. Until then the deduction "
                 f"of {claimed} stays disputed in full.")
     body = _REBUTTALS.get(kind, _REBUTTALS["damage"])
     return body.format(claimed=claimed)
@@ -164,8 +164,8 @@ def _chase_template(f):
             f"we can apply this cash correctly and keep your account current, could you please send the "
             f"remittance advice, or simply confirm which invoice or invoices this payment is meant to settle?\n\n"
             f"If the payment covers a partial amount or takes a deduction, a one-line note of the split is "
-            f"enough. Until we hear back, the amount stays unapplied on your account - no fees or interest "
-            f"accrue from our side while we wait.\n\n"
+            f"enough. Until we hear back, the amount stays unapplied on your account, and we would rather "
+            f"resolve the reference than let the amount age.\n\n"
             f"Regards,\nAccounts Receivable - AutoCash exceptions desk\n"
             f"(Draft composed from the exception record - review before sending.)")
 

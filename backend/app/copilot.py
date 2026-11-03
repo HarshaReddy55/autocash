@@ -92,7 +92,7 @@ def answer(repo, question, delay_model=None):
         return {"answer": f"On the {a['n']} labelled test payments (the demo case's marked answers), the MILP solver "
                           f"is right {a['milp'] * 100:.0f}% of the time and leaves $0.00 unexplained "
                           f"{a['exact'] * 100:.0f}% of the time. The greedy first-fit baseline is right "
-                          f"{a['greedy'] * 100:.0f}% of the time. That gap is why production matching uses MILP.",
+                          f"{a['greedy'] * 100:.0f}% of the time. That gap is why this product's matching uses MILP.",
                 "citations": ["evaluations:seed-ground-truth"], "action": None}
 
     # --- overdue / late payers from the open ledger (no run needed) ---

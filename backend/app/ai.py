@@ -124,8 +124,8 @@ class AiBudget:
 AI_BUDGET = AiBudget()
 
 
-INV_RE = re.compile(r"\bINV[- ]?\d+\b", re.I)
-PO_RE = re.compile(r"\bPO[- ]?\d+\b", re.I)
+INV_RE = re.compile(r"\b(?:([A-Za-z]{1,4})-)?INV[- ]?(\d+)\b", re.I)
+PO_RE = re.compile(r"\b(?:([A-Za-z]{1,4})-)?PO[- ]?(\d+)\b", re.I)
 AMT_RES = [re.compile(r"\$\s*([0-9,]+(?:\.[0-9]{1,2})?)"),
            re.compile(r"\b(?:USD|INR|Rs\.?)\s*([0-9,]+(?:\.[0-9]{1,2})?)", re.I),
            re.compile(r"\b([0-9,]+\.[0-9]{2})\b")]
@@ -143,10 +143,18 @@ def _cents(s):
         return 0
 
 def deterministic_parse(text):
-    invs = sorted(set(m.group(0).upper().replace(" ", "-") for m in INV_RE.finditer(text)))
-    invs = [i if i.startswith("INV-") else "INV-" + i[3:] for i in invs]
-    pos = sorted(set(m.group(0).upper().replace(" ", "-") for m in PO_RE.finditer(text)))
-    pos = [p if p.startswith("PO-") else "PO-" + p[2:] for p in pos]
+    def _refs(rx, kind):
+        out = set()
+        for m in rx.finditer(text):
+            bare = f"{kind}-{m.group(2)}"
+            out.add(bare)
+            if m.group(1):
+                # House-prefixed ids (U-INV-3): keep the full token so it
+                # can link to that ledger; the bare form rides along.
+                out.add(f"{m.group(1).upper()}-{bare}")
+        return sorted(out)
+    invs = _refs(INV_RE, "INV")
+    pos = _refs(PO_RE, "PO")
     amounts = []
     for rx in AMT_RES:
         amounts += [_cents(m.group(1)) for m in rx.finditer(text) if m.group(1)]

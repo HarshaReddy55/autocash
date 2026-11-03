@@ -37,21 +37,33 @@ def jaro_winkler(s1, s2, prefix_weight=0.1):
 _OCR_SUBS = {"1": "I", "0": "O", "5": "S", "8": "B", "I": "1", "O": "0", "S": "5", "B": "8", "l": "1", "Z": "2", "2": "Z"}
 
 def ocr_variants(ref):
-    """Variants of a reference token under common OCR confusions, applied to
-    the alphabetic prefix (INV / PO) where scanners actually mangle letters."""
+    """Variants of a reference token under common OCR confusions.
+    Single-position substitutions are generated across the WHOLE token -
+    scanners mangle digits into letters inside the number (INV-1O05) at
+    least as often as they mangle the alphabetic prefix (1NV-1005). The
+    full-substitution pass stays prefix-only, which bounds the variant
+    count; a variant is only ever a lookup key against the ledger, so a
+    variant that names no real invoice costs nothing."""
     out = {ref}
     if "-" in ref:
         head, tail = ref.split("-", 1)
     else:
         head, tail = ref, ""
+    suffix = ("-" + tail) if tail else ""
     chars = list(head)
     for i, c in enumerate(chars):
         if c in _OCR_SUBS:
             v = chars.copy(); v[i] = _OCR_SUBS[c]
-            out.add("".join(v) + (("-" + tail) if tail else ""))
+            out.add("".join(v) + suffix)
     # full two-substitution pass for badly mangled prefixes
     v = [(_OCR_SUBS.get(c, c)) for c in chars]
-    out.add("".join(v) + (("-" + tail) if tail else ""))
+    out.add("".join(v) + suffix)
+    # single-position substitutions inside the numeric tail
+    tchars = list(tail)
+    for i, c in enumerate(tchars):
+        if c in _OCR_SUBS:
+            v = tchars.copy(); v[i] = _OCR_SUBS[c]
+            out.add(head + "-" + "".join(v))
     return out
 
 def best_fuzzy_customer(payer, customers, threshold=0.88):

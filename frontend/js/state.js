@@ -61,7 +61,7 @@ function renderCasebar(){
   $("cb-run").innerHTML=WS.latest_run?`${esc(String(WS.latest_run.run_id).slice(0,13))}... <small>${esc(WS.latest_run.status)}</small>`:WS.case?"Pending":"-";
   $("cb-appr").textContent=WS.run_status==="staged"?"0 held":String(WS.approvals_pending);
   { const sk=$("r-susp-k"); if(sk) sk.textContent=WS.run_status==="staged"?"Staged wire volume (ready)":"Unapplied cash in suspense"; }
-  const eb=$("export-btn"); if(eb){ const has=!!WS.latest_run; eb.disabled=!has; eb.title=has?"Download the month-end bundle: the latest run with every MILP derivation, the maker-checker audit trail, and the SAP posting documents":"Nothing to export yet - this workspace has no run"; }
+  const eb=$("export-btn"); if(eb){ const has=!!WS.latest_run; eb.disabled=!has; eb.title=has?"Download the month-end bundle as a clean PDF: the latest run, its matches and exceptions, the SAP posting documents, and the fingerprinted audit trail":"Nothing to export yet - this workspace has no run"; }
   const sb=$("sb-case"); if(sb) sb.textContent="CASE "+(c?String(c.name).toUpperCase():"NONE");
   const sw=$("cb-switch"); if(sw&&c&&[...sw.options].some(o=>o.value===c.id)) sw.value=c.id;
   renderStaged(); renderUpStaged(); renderCaseBrief(); showHandoff(); if(window.renderLedgerStaged)renderLedgerStaged();
@@ -183,8 +183,8 @@ function stagedGateHtml(where){
    error badge. The raw error stays visible in diagnostics detail. */
 function aiQuotaSafe(){ try{ const e=(window.__AI_LAST_ERROR||""); return /429|quota|rate limit/i.test(e) }catch(_){ return false } }
 function aiModeLabel(configured,lastErr){
-  if(!configured) return "Deterministic Verifier Fallback Active (No AI Key - 100% Verified SLA)";
-  if(lastErr) return /429|quota|rate limit/i.test(lastErr) ? "Deterministic Verifier Fallback Active (Quota-Safe Mode - 100% Verified SLA)" : "Gemini configured - last call failed (see diagnostics)";
+  if(!configured) return "Deterministic Verifier Fallback Active (No AI Key)";
+  if(lastErr) return /429|quota|rate limit/i.test(lastErr) ? "Deterministic Verifier Fallback Active (Quota-Safe Mode)" : "Gemini configured - last call failed (see diagnostics)";
   return "Gemini live";
 }
 const SEED_STORY="A normal day at a mid-size supplier. 16 payments arrive against 19 open invoices from 9 customers. Most are routine. Hidden among them: one payment split across two invoices, one that gives only a PO number, one with a wrong character in the invoice reference, one that takes an early-payment discount and deducts extra for a claimed shortage, one duplicate of an earlier wire, and one from a payer nobody recognises.";
@@ -224,7 +224,7 @@ function renderStaged(){
   const p=WS.pending_payments;
   if(!WS.case && !WS.staged_payments){ el.innerHTML=`<small>No case is loaded. Load the demo case or a use case, build one in Use Cases, or upload files - the staged payments will appear here, ready to run.</small>`; return }
   if(!p.length){ el.innerHTML=`<small>All ${WS.staged_payments} staged payments of this case have been run${WS.latest_run?` - latest run <b>${esc(WS.latest_run.run_id)}</b> is in the history below and on the Dashboard`:""}. Load another case or reset the workspace to run again.</small>`; return }
-  el.innerHTML=stagedTable(p)+`<div class="mutbar"><b>Live proof:</b> <button class="btn small ghost" onclick="mutateFirstWire(this)">&#9889; Test Live Mutation: Short-Pay ${esc(p[0].payment_id)} by $500</button> <small>Edits that wire in the real ledger (amount ${money(p[0].amount_cents)} &#8594; ${money(p[0].amount_cents-50000)}), then run the solver and watch its verdict change. Amount and remittance are also editable per wire in the Ledger (07).</small></div><small>${p.length} of ${WS.staged_payments} staged payments are waiting to run.</small>`;
+  el.innerHTML=stagedTable(p)+`<div class="mutbar"><b>Live proof:</b> <button class="btn small ghost" onclick="mutateFirstWire(this)">&#9889; Test Live Mutation: Short-Pay ${esc(p[0].payment_id)} by $500</button> <small>Edits that wire in the real ledger (amount ${money(p[0].amount_cents)} &#8594; ${money(p[0].amount_cents-50000)}), then run the solver and watch its verdict change. Amount and remittance are also editable per wire in the Ledger (06).</small></div><small>${p.length} of ${WS.staged_payments} staged payments are waiting to run.</small>`;
 }
 function renderUpStaged(){
   const el=$("up-staged"); if(!el||!WS) return;

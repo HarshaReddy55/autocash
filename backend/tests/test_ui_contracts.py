@@ -119,7 +119,7 @@ def test_smooth_layer_contract():
                   "busyBtn", "bumpGen", "row-highlight-flash"]:
         assert token in js, token
     assist = client.get("/js/assist.js").text
-    assert "Posted to SAP" in assist and "Parked in suspense" in assist
+    assert "document staged for SAP" in assist and "Parked in suspense" in assist
     css = client.get("/css/livecube.css").text
     for token in [".skeleton-line", ".skeleton-card", ".spin",
                   ".row-highlight-flash", "#loadbar", "prefers-reduced-motion"]:
@@ -157,7 +157,7 @@ def test_v31_staged_lifecycle_contract():
     per-agent counts, Next Step footers, the live-proof mutation, the
     quota-safe AI framing, and v31 cache-bust stamps."""
     html = client.get("/").text
-    assert 'css/livecube.css?v=47' in html and 'js/state.js?v=47' in html
+    assert 'css/livecube.css?v=52' in html and 'js/state.js?v=52' in html
     # v32 declutter: no standalone Load demo case button anywhere, and the
     # author credit sits above the nav so it can never clip items 12-14
     assert '>Load demo case</button>' not in html

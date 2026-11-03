@@ -1,6 +1,6 @@
 """SQLite repository layer (WAL). Services never touch SQL directly.
 Schema is Postgres-compatible in spirit: plain types, integer cents."""
-import sqlite3, json, os, threading
+import sqlite3, json, os, threading, hashlib
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS invoices(
@@ -54,6 +54,9 @@ class Repository:
                 cols = [r[1] for r in conn.execute("PRAGMA table_info(payments)").fetchall()]
                 if "references_json" not in cols:
                     conn.execute("ALTER TABLE payments ADD COLUMN references_json TEXT DEFAULT '[]'")
+                acols = [r[1] for r in conn.execute("PRAGMA table_info(audit_log)").fetchall()]
+                if "fingerprint" not in acols:
+                    conn.execute("ALTER TABLE audit_log ADD COLUMN fingerprint TEXT")
                 conn.commit()
                 break
             except sqlite3.OperationalError:
@@ -248,8 +251,11 @@ class Repository:
         self._x("INSERT INTO exceptions(run_id, payment_id, kind, severity, recommended_action, detail_json) VALUES (?,?,?,?,?,?)",
                 (run_id, payment_id, kind, severity, action, json.dumps(detail)))
     def audit(self, actor, action, entity, entity_id, payload, ts):
-        self._x("INSERT INTO audit_log(actor, action, entity, entity_id, payload_json, created_at) VALUES (?,?,?,?,?,?)",
-                (actor, action, entity, entity_id, json.dumps(payload), ts))
+        payload_json = json.dumps(payload, sort_keys=True)
+        fingerprint = hashlib.sha256(
+            f"{actor}|{action}|{entity}|{entity_id}|{payload_json}|{ts}".encode()).hexdigest()
+        self._x("INSERT INTO audit_log(actor, action, entity, entity_id, payload_json, created_at, fingerprint) VALUES (?,?,?,?,?,?,?)",
+                (actor, action, entity, entity_id, payload_json, ts, fingerprint))
     def exceptions_for_run(self, run_id):
         rows = self.conn.execute("SELECT payment_id, kind, severity, recommended_action, detail_json, status FROM exceptions WHERE run_id=?", (run_id,)).fetchall()
         return [{"payment_id": r[0], "kind": r[1], "severity": r[2], "recommended_action": r[3], "detail": json.loads(r[4]), "status": r[5]} for r in rows]
@@ -362,7 +368,7 @@ class Repository:
 
     def audit_list(self, limit=100):
         rows = self.conn.execute(
-            "SELECT actor, action, entity, entity_id, payload_json, created_at FROM audit_log "
+            "SELECT actor, action, entity, entity_id, payload_json, created_at, fingerprint FROM audit_log "
             "ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         return [{"actor": r[0], "action": r[1], "entity": r[2], "entity_id": r[3],
-                 "payload": json.loads(r[4]), "created_at": r[5]} for r in rows]
+                 "payload": json.loads(r[4]), "created_at": r[5], "fingerprint": r[6]} for r in rows]

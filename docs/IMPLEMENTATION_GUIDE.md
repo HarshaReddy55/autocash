@@ -91,7 +91,8 @@ Additional contracts used across the product surface:
 | `POST /api/v1/scenarios/custom/run` | Run a custom scenario | Caller-supplied pack through the same path. |
 | `GET /api/v1/audit` | Audit trail | Fingerprinted entries for the workspace. |
 | `GET /api/v1/policy` | Read the policy | The tenant's stored governance thresholds. |
-| `GET /api/v1/export/bundle` | Month-end export | The executive audit and SAP clearing bundle. |
+| `GET /api/v1/export/bundle` | Month-end export | The executive audit and SAP clearing bundle as JSON data. |
+| `GET /api/v1/export/bundle.pdf` | The bundle as a PDF | The same contents rendered as a clean, print-ready audit document: run summary, matches, SAP documents, exceptions, and the fingerprinted audit trail. |
 | `GET /api/v1/export/matches.csv` | Matches CSV | A run's matches as a spreadsheet file. |
 | `GET /api/v1/tenants/demo` | Demo tenants | The switchable demo workspaces. |
 | `GET /api/v1/methodology` | Methodology content | The Methodology page's data. |

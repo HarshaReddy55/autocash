@@ -8,7 +8,7 @@ HEADER_SYNONYMS = {
     "invoice_id": ["invoice", "invoice_id", "invoice_no", "invoice_number", "inv_no", "inv", "bill_no", "document_no"],
     "customer": ["customer", "customer_name", "client", "buyer", "payer_name", "sold_to"],
     "subsidiary": ["subsidiary", "entity", "company", "business_unit", "plant"],
-    "gross_cents": ["amount", "gross", "gross_amount", "invoice_amount", "total", "value", "amt"],
+    "gross_cents": ["amount", "gross", "gross_amount", "invoice_amount", "amount_due", "total_due", "due_amount", "invoice_total", "total_amount", "total", "value", "amt"],
     "po_number": ["po", "po_number", "po_no", "purchase_order", "order_no"],
     "discount_rate": ["discount_rate", "discount", "disc_pct", "early_pay_discount"],
     "age_days": ["age_days", "age", "days_outstanding", "aging"],
@@ -85,7 +85,7 @@ def parse_invoices_csv(text):
     return {"invoices": rows, "mapping": mapping, "errors": errors, "fingerprint": source_fingerprint(headers)}
 
 PAYMENT_HEADER_SYNONYMS = {
-    "payment_id": ["payment_id", "payment", "payment_no", "txn_id", "transaction_id", "wire_id", "utr"],
+    "payment_id": ["payment_id", "payment", "payment_no", "payment_ref", "payment_reference", "txn_id", "transaction_id", "wire_id", "utr"],
     "payer_raw": ["payer", "payer_name", "customer", "customer_name", "remitter", "from"],
     "amount_cents": ["amount", "payment_amount", "paid", "value", "amt", "total"],
     "claimed_deduction_cents": ["deduction", "claimed_deduction", "deduction_amount", "short_pay"],
@@ -94,14 +94,21 @@ PAYMENT_HEADER_SYNONYMS = {
     "remittance_text": ["remittance", "remittance_text", "notes", "reference_text", "memo"],
 }
 
-_REF_RE = re.compile(r"\b(INV|PO|SI|BILL|DOC)[-\s]?(\d+)\b", re.IGNORECASE)
+_REF_RE = re.compile(r"\b(?:([A-Za-z]{1,4})-)?(INV|PO|SI|BILL|DOC)[-\s]?(\d+)\b", re.IGNORECASE)
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 def extract_references(text):
     out = []
-    for kind, num in _REF_RE.findall(text or ""):
-        out.append(f"{kind.upper()}-{num}")
+    for prefix, kind, num in _REF_RE.findall(text or ""):
+        bare = f"{kind.upper()}-{num}"
+        if prefix:
+            # A ledger whose ids carry a house prefix (U-INV-3, ACME-PO-9):
+            # keep the full token so it can link to that ledger, and the
+            # bare form too, so a prefix that was only prose costs nothing.
+            full = f"{prefix.upper()}-{bare}"
+            if full not in out: out.append(full)
+        if bare not in out: out.append(bare)
     return out
 
 def _truthy(v):

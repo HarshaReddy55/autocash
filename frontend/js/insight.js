@@ -86,9 +86,9 @@ async function loadForecast(){ fillInfo(); renderFcDisputes();
     const line=pts.map(p=>p.join(",")).join(" ");
     const beyondRow=f.beyond&&f.beyond.count?`<tr><td><a href="#" onclick="fcDrill(0);return false">Beyond week 8</a></td><td colspan="3"><small>Expected after the horizon - counted in Open receivables, not in the weekly bands.</small></td><td><b>${money(f.beyond.cents)}</b></td><td>-</td><td>${f.beyond.count} - view</td></tr>`:"";
     $("fc").innerHTML=`<svg viewBox="0 0 640 220" style="width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:0"><polygon class="fband" points="${band}" fill="#3d75e8" opacity="0.22"></polygon><polyline class="fdraw" pathLength="1" points="${line}" fill="none" stroke="#7fa6f2" stroke-width="2.5"></polyline>${pts.map((p,i)=>`<circle class="fdot" style="animation-delay:${0.75+i*0.12}s" cx="${p[0]}" cy="${p[1]}" r="4" fill="#3d75e8"></circle><text x="${p[0]-16}" y="212" font-size="11" fill="#a7a49d">Week ${i+1}</text>`).join("")}</svg>
-    <table class="fctab"><tr><th>Week <span data-info="week"></span></th><th>P10 (cautious) <span data-info="p10"></span></th><th>P50 (expected) <span data-info="p50"></span></th><th>P90 (optimistic) <span data-info="p90"></span></th><th>Cumulative P50</th><th>Invoices</th></tr>${f.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.p10_cents)}</td><td><b>${money(w.p50_cents)}</b></td><td>${money(w.p90_cents)}</td><td>${money(w.cumulative_p50_cents)}</td><td>${w.invoice_ids.length?`<a href="#" onclick="fcDrill(${w.week});return false">${w.invoice_ids.length} - view</a>`:"0"}</td></tr>`).join("")}${beyondRow}</table><p><small>Band = P10 to P90 across 400 simulated payment timings per invoice from the delay model (each invoice lands whole in one week per simulation). Click a week's invoice count to see exactly which invoices build that week. Horizon ${f.horizon_days} days.</small></p>`;
+    <table class="fctab"><tr><th>Week <span data-info="week"></span></th><th>P10 (cautious) <span data-info="p10"></span></th><th>P50 (expected) <span data-info="p50"></span></th><th>P90 (optimistic) <span data-info="p90"></span></th><th>Cumulative P50 <span data-info="cump50"></span></th><th>Invoices <span data-info="weekinv"></span></th></tr>${f.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.p10_cents)}</td><td><b>${money(w.p50_cents)}</b></td><td>${money(w.p90_cents)}</td><td>${money(w.cumulative_p50_cents)}</td><td>${w.invoice_ids.length?`<a href="#" onclick="fcDrill(${w.week});return false">${w.invoice_ids.length} - view</a>`:"0"}</td></tr>`).join("")}${beyondRow}</table><p><small>Band = P10 to P90 across 400 simulated payment timings per invoice from the delay model (each invoice lands whole in one week per simulation). Click a week's invoice count to see exactly which invoices build that week. Horizon ${f.horizon_days} days.</small></p>`;
     $("fc-drill").innerHTML="";
-    $("fc-cust").innerHTML=(f.customers||[]).length?`<table><tr><th>Customer</th><th>Invoices</th><th>Open</th><th>Overdue</th><th>Expected 30d</th><th>Expected 8 wks</th><th>Avg pred. delay</th></tr>${f.customers.map(r=>`<tr><td>${esc(r.customer)}</td><td>${r.invoices}</td><td>${money(r.open_cents)}</td><td>${money(r.overdue_cents)}</td><td>${money(r.expected_30_cents)}</td><td>${money(r.expected_horizon_cents)}</td><td>${r.avg_predicted_delay_days}d</td></tr>`).join("")}</table>`:"<small>No customers.</small>";
+    $("fc-cust").innerHTML=(f.customers||[]).length?`<table><tr><th>Customer</th><th>Invoices <span data-info="custinv"></span></th><th>Open <span data-info="custopen"></span></th><th>Overdue <span data-info="custover"></span></th><th>Expected 30d <span data-info="exp30"></span></th><th>Expected 8 wks <span data-info="exp8w"></span></th><th>Avg pred. delay <span data-info="avgdelay"></span></th></tr>${f.customers.map(r=>`<tr><td>${esc(r.customer)}</td><td>${r.invoices}</td><td>${money(r.open_cents)}</td><td>${money(r.overdue_cents)}</td><td>${money(r.expected_30_cents)}</td><td>${money(r.expected_horizon_cents)}</td><td>${r.avg_predicted_delay_days}d</td></tr>`).join("")}</table>`:"<small>No customers.</small>";
     const sel=$("wi-cust"); const cur=sel.value;
     sel.innerHTML=(f.customers||[]).map(r=>`<option value="${esc(r.customer)}">${esc(r.customer)}</option>`).join("");
     if(cur)sel.value=cur;
@@ -99,8 +99,9 @@ function fcDrill(w){
   if(!FC)return;
   const rows=(FC.invoices||[]).filter(d=>w===0?d.expected_week===null:d.expected_week===w)
     .sort((a,b)=>a.expected_in_days-b.expected_in_days);
-  $("fc-drill").innerHTML=`<div style="margin-top:12px"><h4>${w===0?"Beyond the 8-week horizon":"Week "+w+" - the invoices inside it"} (${rows.length})</h4>${rows.length?`<table><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Expected in</th><th>Chance in 30d</th><th>Chance in horizon</th></tr>${rows.map(d=>`<tr><td>${esc(d.invoice_id)}</td><td>${esc(d.customer)}</td><td>${money(d.gross_cents)}</td><td>${d.expected_in_days<=0?"Due now":Math.round(d.expected_in_days)+"d"}</td><td>${Math.round(d.prob_within_30*100)}%</td><td>${Math.round(d.prob_within_horizon*100)}%</td></tr>`).join("")}</table>`:"<small>No invoice is expected in this bucket.</small>"}</div>`;
+  $("fc-drill").innerHTML=`<div style="margin-top:12px"><h4>${w===0?"Beyond the 8-week horizon":"Week "+w+" - the invoices inside it"} (${rows.length})</h4>${rows.length?`<table><tr><th>Invoice</th><th>Customer</th><th>Amount</th><th>Expected in</th><th>Chance in 30d <span data-info="chance30"></span></th><th>Chance in horizon <span data-info="chancehz"></span></th></tr>${rows.map(d=>`<tr><td>${esc(d.invoice_id)}</td><td>${esc(d.customer)}</td><td>${money(d.gross_cents)}</td><td>${d.expected_in_days<=0?"Due now":Math.round(d.expected_in_days)+"d"}</td><td>${Math.round(d.prob_within_30*100)}%</td><td>${Math.round(d.prob_within_horizon*100)}%</td></tr>`).join("")}</table>`:"<small>No invoice is expected in this bucket.</small>"}</div>`;
   $("fc-drill").scrollIntoView({behavior:"smooth",block:"nearest"});
+  fillInfo();
 }
 let MC_REF="";
 async function draftReminder(invId){
@@ -117,7 +118,8 @@ async function fcWhatif(){
     const d30=r.delta_30_cents, dhz=r.delta_cents;
     const fmt=v=>(v>0?"+":v<0?"-":"")+money(Math.abs(v)).replace(".00","");
     const redistributed = (d30===0&&dhz===0&&r.weeks.some(w=>w.shifted_p50_cents!==w.base_p50_cents))?" The 30-day and 8-week totals do not change - the cash moves between weeks, which is what the table below shows.":"";
-    $("wi-out").innerHTML=`<p>If <b>${esc(r.customer)}</b> pays <b>${r.shift_days===0?"on the current prediction":Math.abs(r.shift_days)+" days "+(r.shift_days<0?"earlier":"later")}</b>: expected cash in 30 days moves by <b>${fmt(d30)}</b> (to ${money(r.shifted_expected_30_cents)}), and across the 8 weeks by <b>${fmt(dhz)}</b> (to ${money(r.shifted_expected_horizon_cents)}).${redistributed}</p><table><tr><th>Week</th><th>P50 now</th><th>P50 shifted</th><th>Move</th></tr>${r.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.base_p50_cents)}</td><td>${money(w.shifted_p50_cents)}</td><td>${fmt(w.shifted_p50_cents-w.base_p50_cents)}</td></tr>`).join("")}</table>`;
+    $("wi-out").innerHTML=`<p>If <b>${esc(r.customer)}</b> pays <b>${r.shift_days===0?"on the current prediction":Math.abs(r.shift_days)+" days "+(r.shift_days<0?"earlier":"later")}</b>: expected cash in 30 days moves by <b>${fmt(d30)}</b> (to ${money(r.shifted_expected_30_cents)}), and across the 8 weeks by <b>${fmt(dhz)}</b> (to ${money(r.shifted_expected_horizon_cents)}).${redistributed}</p><table><tr><th>Week</th><th>P50 now <span data-info="whatifp50"></span></th><th>P50 shifted <span data-info="whatifp50"></span></th><th>Move <span data-info="whatifmove"></span></th></tr>${r.weeks.map(w=>`<tr><td>Week ${w.week}</td><td>${money(w.base_p50_cents)}</td><td>${money(w.shifted_p50_cents)}</td><td>${fmt(w.shifted_p50_cents-w.base_p50_cents)}</td></tr>`).join("")}</table>`;
+    fillInfo();
   }catch(e){toast(e.message)}
 }
 async function loadEval(){ fillInfo();
@@ -137,8 +139,26 @@ async function loadEval(){ fillInfo();
     <div class="card"><div class="k">MILP exact rate <span data-info="exactrate"></span></div><div class="v">${(ev.milp_exact_rate*100).toFixed(0)}%</div><div class="n">Solutions reconciling to $0.00 residual</div></div></div>
     <div class="panel"><table><tr><th>Payment <span data-info="payid"></span></th><th>Expected <span data-info="expct"></span></th><th>MILP got <span data-info="milpgot"></span></th><th>Residual <span data-info="resid"></span></th><th>MILP <span data-info="milpcol"></span></th><th>Greedy <span data-info="greedycol"></span></th></tr>
     ${ev.cases.map(c=>`<tr><td>${esc(c.payment_id)}</td><td>${c.expected.join(", ")}</td><td>${c.milp_got.join(", ")}</td><td>${money(c.milp_residual_cents)}</td><td class="${c.milp_correct?"p":"f"}" style="color:${c.milp_correct?"var(--ok)":"var(--bad)"};font-weight:650">${c.milp_correct?"correct":"miss"}</td><td>${c.greedy_correct?"correct":"miss"}</td></tr>`).join("")}</table>
-    <p><small>${esc(ev.basis||"")}</small></p></div>`;
+    <p><small>${esc(ev.basis||"")}</small></p></div>
+    <div class="panel"><h3>Scenario pack suite <span data-info="scenpack"></span></h3><div class="d">Ten full pipeline cases with their expectations stated up front. Each runs the real pipeline on its own clean ledger - a pack passes only when every stated check passes.</div><div id="eval-scenarios"><small>Running the ten packs...</small></div></div>`;
+    renderEvalScenarios();
   }catch(e){toast(e.message)}
+}
+async function renderEvalScenarios(){
+  const el=$("eval-scenarios"); if(!el) return;
+  try{
+    const packs=await api("/api/v1/scenarios");
+    const rows=[];
+    for(const p of packs){
+      try{
+        const r=await api(`/api/v1/scenarios/${encodeURIComponent(p.id)}/run`,{method:"POST"});
+        const passed=(r.checks||[]).filter(c=>c.pass).length, total=(r.checks||[]).length;
+        rows.push(`<tr><td>${esc(p.title||p.id)}</td><td>${pill(r.all_pass?"Pass":"Fail", r.all_pass?"ok":"bad")}</td><td>${passed} / ${total} checks</td></tr>`);
+      }catch(e){ rows.push(`<tr><td>${esc(p.title||p.id)}</td><td colspan="2"><small>Could not run: ${esc(e.message)}</small></td></tr>`); }
+    }
+    el.innerHTML=`<table><tr><th>Pack</th><th>Verdict</th><th>Checks</th></tr>${rows.join("")}</table>`;
+    fillInfo();
+  }catch(e){ el.innerHTML="<small>The scenario packs could not be loaded.</small>"; }
 }
 async function loadHealth(){ fillInfo();
   try{const h=await api("/health");const r=await api("/ready");const m=h.model_metrics||{};
@@ -155,7 +175,7 @@ async function loadHealth(){ fillInfo();
     <tr><td>Training set</td><td>Rows</td><td>${m.train_rows} train / ${m.test_rows} test</td><td>Time-ordered 80/20 split</td></tr></table>
     <p><small>Data basis: ${esc(m.data_basis||"")}</small></p></div>
     <div class="panel"><h3>Readiness checks <span data-info="ready"></span></h3><table><tr><th>Check <span data-info="chk"></span></th><th>State <span data-info="state"></span></th></tr>${Object.entries(r.checks||{}).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${pill(String(v),v==="ok"?"ok":"bad")}</td></tr>`).join("")}</table></div>
-    <div class="panel"><h3>Kernel and test suite health</h3><div id="diag-body"><div class="note">Loading live diagnostics...</div></div></div>`;
+    <div class="panel"><h3>Kernel and test suite health <span data-info="kernelhealth"></span></h3><div id="diag-body"><div class="note">Loading live diagnostics...</div></div></div>`;
     loadDiag();
   }catch(e){toast(e.message)}
 }
@@ -317,7 +337,7 @@ async function loadScore(){
     let ev=0; try{ const hub=await api("/api/v1/mail/hub"); ev=(hub.disputes||[]).reduce((a,x)=>a+(x.expected_recovery_usd||0),0); }catch(e){}
     const hours=(auto.length*12/60).toFixed(1);
     el.innerHTML=`<div class="scoregrid">
-      <div class="card"><div class="k">Autonomous resolution rate</div><div class="v">${resolution}%</div><div class="n">${decided} of ${staged} wires received a stored decision in the latest run (posted, held or refused with a reason); the duplicate the guard blocked before matching is the remainder</div></div>
+      <div class="card"><div class="k">Autonomous resolution rate</div><div class="v">${resolution}%</div><div class="n">${decided} of ${staged} wires received a stored decision in the latest run (posted, held or refused with a reason); any wire left without a stored decision (for example the duplicate the guard blocked before matching) is the remainder</div></div>
       <div class="card"><div class="k">Touchless auto-post rate</div><div class="v">${(latest.touchless_rate*100).toFixed(1)}%</div><div class="n">Payments posted with no human touch, of all payments in the run</div></div>
       <div class="card"><div class="k">Cash posted by the agent</div><div class="v">${money(cash)}</div><div class="n">Net applied on auto-posted matches in the latest run</div></div>
       <div class="card"><div class="k">Recovery in flight (EV)</div><div class="v">$${ev.toLocaleString("en-US",{maximumFractionDigits:0})}</div><div class="n">Expected value of the dispute claims the Deduction Agent opened</div></div>

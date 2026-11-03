@@ -22,6 +22,33 @@ def test_export_bundle_refuses_a_workspace_with_no_run():
     assert r.status_code == 200, r.text
 
 
+def test_export_bundle_pdf_is_a_real_pdf():
+    client.post("/api/v1/workspace/reset")
+    r = client.get("/api/v1/export/bundle.pdf")
+    assert r.status_code == 409, r.text
+    client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")
+    r = client.get("/api/v1/export/bundle.pdf")
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("application/pdf")
+    assert r.content[:4] == b"%PDF" and len(r.content) > 4000, len(r.content)
+    rj = client.get("/api/v1/export/bundle")
+    assert rj.status_code == 200, rj.text  # the JSON bundle stays available
+
+
+def test_audit_entries_carry_content_fingerprints():
+    import re as _re
+    before = client.get("/api/v1/audit").json()
+    marker = before[0]["created_at"] if before else ""
+    client.post("/api/v1/workspace/reset")
+    client.post("/api/v1/cases/seed/load")
+    client.post("/api/v1/workspace/run")
+    fresh = [e for e in client.get("/api/v1/audit").json() if e["created_at"] > marker]
+    assert len(fresh) >= 3, fresh  # reset + case load + run, written by this test
+    fps = [e.get("fingerprint") for e in fresh]
+    assert all(f and _re.fullmatch(r"[0-9a-f]{64}", f) for f in fps), fps
+
+
 def test_parse_reports_unknown_refs_as_data():
     client.post("/api/v1/workspace/reset")
     client.post("/api/v1/cases/seed/load")

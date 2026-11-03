@@ -13,7 +13,7 @@ async function runParse(text){
     const issues=(out.verification?.issues||[]).map(x=>pill(x,"bad")).join(" ");
     const pipeHtml=(out.pipeline&&out.pipeline.length)?`<div class="pipe">${out.pipeline.map(p=>`<div class="step"><div class="st">${esc(p.stage)} <span data-info="${p.stage.startsWith("1")?"pex":p.stage.startsWith("2")?"psch":p.stage.startsWith("3")?"pver":"ptrust"}"></span></div><div class="en">${esc(p.engine)}${p.ms?` - ${p.ms} ms`:""}</div><p>${esc(p.detail)}${p.issues&&p.issues.length?`<br><span style="color:var(--bad)">${p.issues.map(esc).join("; ")}</span>`:""}</p></div>`).join("")}</div>`:"";
     $("parse-out").innerHTML=pipeHtml+`<div class="panel"><h3>Structured result <span data-info="parsefld"></span></h3>
-    <div class="detail">Parser: <b>${esc(out.source||"deterministic")}</b> ${out.degraded?pill(out.ai_state==="no_key"?"Deterministic Verifier Fallback Active (No AI Key - 100% Verified SLA)":(/429|quota/i.test(window.__AI_LAST_ERROR||"")?"Deterministic Verifier Fallback Active (Quota-Safe Mode - 100% Verified SLA)":"Deterministic fallback - Gemini did not answer (diagnostics on Agent Health)"),"warn"):""}<br>
+    <div class="detail">Parser: <b>${esc(out.source||"deterministic")}</b> ${out.degraded?pill(out.ai_state==="no_key"?"Deterministic Verifier Fallback Active (No AI Key)":(/429|quota/i.test(window.__AI_LAST_ERROR||"")?"Deterministic Verifier Fallback Active (Quota-Safe Mode)":"Deterministic fallback - Gemini did not answer (diagnostics on Agent Health)"),"warn"):""}<br>
     Amount: <b>${f.amount_cents!=null?money(f.amount_cents):"-"}</b> - Payer: <b>${esc(f.payer||"-")}</b> - Claimed deduction: <b>${f.deduction_cents!=null?money(f.deduction_cents):"-"}</b>${f.deduction_reason?` (${esc(f.deduction_reason)})`:""}<br>
     References extracted: ${refs}<br>${out.verification?(out.verification.verified?pill("Verifier: every reference exists in the open ledger","ok"):("Verifier flags: "+issues)):""}${(out.verification&&out.verification.unknown_refs&&out.verification.unknown_refs.length)?`<p style="margin:8px 0 0"><button class="btn small" onclick="seedRefsAndStage(this)">+ Auto-Seed Referenced Invoices into Ledger &amp; Stage Wire (${out.verification.unknown_refs.map(esc).join(", ")})</button> <small>Creates exactly those missing invoices in the ledger - at the wire amount for a single reference, or the amounts this remittance itself lists - then stages the wire against them.</small></p>`:""}</div>
     <details><summary><small>Raw response</small></summary><pre style="background:#0f172a;color:#dbeafe;padding:14px;border-radius:10px;overflow:auto;font-size:12px">${esc(JSON.stringify(out,null,2))}</pre></details></div>`;
@@ -291,7 +291,7 @@ async function decideMatch(id,decision,btn){
     if(decision==="approve"&&(r.settled_invoices||[]).length) msg+=` - ${r.settled_invoices.length} invoice(s) settled and out of the forecast`;
     if(r.fingerprint) msg+=` - audit fingerprint ${r.fingerprint.slice(0,12)}...`;
     if(cell){ if(r.status==="PARKED_SUSPENSE") cell.innerHTML='<span class="posted-ok">&#10003; Parked in suspense</span>';
-      else if(decision==="approve") cell.innerHTML='<span class="posted-ok">&#10003; Posted to SAP</span>';
+      else if(decision==="approve") cell.innerHTML='<span class="posted-ok">&#10003; Approved - document staged for SAP</span>';
       else cell.innerHTML='<span style="opacity:.65">Rejected</span>'; }
     toast(msg);
     setTimeout(()=>{ loadApprovals(); if($("appr-drawer").classList.contains("on")) renderApprDrawer(); },1000);
@@ -391,8 +391,9 @@ async function renderFcDisputes(){
     const claims=ms.map(m=>({m, d:(m.result||{}).deduction})).filter(x=>x.d&&x.d.autonomous_action==="AUTO_GENERATE_DISPUTE_CLAIM")
       .sort((a,b)=>Number(b.d.expected_recovery_value_usd||0)-Number(a.d.expected_recovery_value_usd||0));
     if(!claims.length){ el.innerHTML=""; return }
-    el.innerHTML=`<div class="panel"><h3>Dispute priority - from the active run</h3><div class="d">The Deduction Agent flagged these short-pays during reconciliation. They sit at the top of the collections work because the money is recoverable: expected recovery is win probability x claim, minus the cost of fighting. One click takes you to the claim on the Dispute desk, draft ready.</div>
-    <table><tr><th>Payment</th><th>Payer</th><th>Claim</th><th>Reason</th><th>Win probability</th><th>Expected recovery</th><th></th></tr>${claims.map(({m,d})=>`<tr><td>${esc(m.payment_id)}</td><td>${esc(d.payer||"")}</td><td>${money(d.claimed_cents||0)}</td><td>${esc(d.assigned_erp_reason_code||"")} - ${esc((d.classification||{}).label||"deduction")}</td><td>${d.win_probability}</td><td><b>$${Number(d.expected_recovery_value_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b></td><td><button class="btn small" data-pid="${esc(m.payment_id)}" onclick="dispatchClaim(this.dataset.pid)">Dispatch dispute email &rarr;</button></td></tr>`).join("")}</table></div>`;
+    el.innerHTML=`<div class="panel"><h3>Dispute priority - from the active run <span data-info="dispprio"></span></h3><div class="d">The Deduction Agent flagged these short-pays during reconciliation. They sit at the top of the collections work because the money is recoverable: expected recovery is win probability x claim, minus the cost of fighting. One click takes you to the claim on the Dispute desk, draft ready.</div>
+    <table><tr><th>Payment</th><th>Payer</th><th>Claim <span data-info="claimamt"></span></th><th>Reason</th><th>Win probability <span data-info="winprob"></span></th><th>Expected recovery <span data-info="exprec"></span></th><th></th></tr>${claims.map(({m,d})=>`<tr><td>${esc(m.payment_id)}</td><td>${esc(d.payer||"")}</td><td>${money(d.claimed_cents||0)}</td><td>${esc(d.assigned_erp_reason_code||"")} - ${esc((d.classification||{}).label||"deduction")}</td><td>${d.win_probability}</td><td><b>$${Number(d.expected_recovery_value_usd||0).toLocaleString("en-US",{maximumFractionDigits:2})}</b></td><td><button class="btn small" data-pid="${esc(m.payment_id)}" onclick="dispatchClaim(this.dataset.pid)">Dispatch dispute email &rarr;</button></td></tr>`).join("")}</table></div>`;
+    fillInfo();
   }catch(e){}
 }
 let MAIL_FOCUS=null;
@@ -423,7 +424,7 @@ let LAST_PARSE=null;
 function renderWireCard(){
   const f=(LAST_PARSE&&LAST_PARSE.fields)||{};
   $("wire-amt").textContent=f.amount_cents?money(f.amount_cents):"not parsed yet";
-  $("wire-meta").innerHTML=`Payer: <b>${esc(f.payer||"-")}</b> - read by <b>${esc(LAST_PARSE.source||"deterministic")}</b>${LAST_PARSE.degraded?" (deterministic fallback - no Gemini key configured)":""} - ${(LAST_PARSE.verification||{}).verified?'<span style="color:var(--ok)">every reference verified in the ledger</span>':'<span style="color:var(--warn)">some references flagged - see the pipeline below</span>'}`;
+  $("wire-meta").innerHTML=`Payer: <b>${esc(f.payer||"-")}</b> - read by <b>${esc(LAST_PARSE.source||"deterministic")}</b>${LAST_PARSE.degraded?" (deterministic fallback - "+(LAST_PARSE.ai_state==="no_key"?"no Gemini key configured":"Gemini unavailable for this parse")+")":""} - ${(LAST_PARSE.verification||{}).verified?'<span style="color:var(--ok)">every reference verified in the ledger</span>':'<span style="color:var(--warn)">some references flagged - see the pipeline below</span>'}`;
   $("wire-ded").innerHTML=f.deduction_cents?`<div class="dedcard">Claimed deduction: <b>-${money(f.deduction_cents)}</b>${f.deduction_reason?` - ${esc(f.deduction_reason)}`:""} - the Deduction Agent classifies it at reconcile time, and the expected-value rule decides whether to dispute it.</div>`:"";
   const ok=f.amount_cents>0; $("stage-btn").disabled=!ok; $("stage-run-btn").disabled=!ok;
 }
@@ -459,7 +460,7 @@ function deskCard(f,i){
 }
 let CHASE=[];
 function chaseCard(f,i){
-  return `<div class="deskcard"><b>${esc(f.payment_id)}</b> - ${esc(f.payer)} - <b>${money(f.amount_cents)}</b> arrived with no remittance and matched nothing on their account.
+  return `<div class="deskcard"><b>${esc(f.payment_id)}</b> - ${esc(f.payer)} - <b>${money(f.amount_cents)}</b> could not be matched to any open invoice - no invoice set on the ledger explains this wire.
   <div class="tonebar"><button onclick="chaseDraft(${i},this)">Draft chase email</button></div>
   <textarea id="chase-text-${i}" rows="9" placeholder="The chase draft appears here - it asks the payer for the remittance advice and confirms the amount stays unapplied meanwhile."></textarea>
   <p><button class="btn small ghost" onclick="copyChase(${i})">Copy draft</button> <span id="chase-src-${i}"></span></p>
@@ -487,10 +488,11 @@ async function renderDisputeDesk(matches, exceptions){
   CHASE=(xs||[]).filter(e=>e.kind==="NO_MATCH").map(e=>({payment_id:e.payment_id,payer:(e.detail||{}).payer||"Unknown payer",amount_cents:(e.detail||{}).amount_cents||0}));
   if(!items.length && !CHASE.length){ el.innerHTML=""; return }
   DESK=items.map(m=>{const d=m.result.deduction; return {payment_id:m.payment_id,payer:d.payer||"Buyer",claimed_cents:d.claimed_cents||0,reason_code:d.assigned_erp_reason_code,classification_label:(d.classification||{}).label||"deduction",win_probability:d.win_probability,expected_recovery_usd:d.expected_recovery_value_usd,tone:"strict"}});
-  el.innerHTML=`<div class="panel"><h3>Dispute desk - deductions worth fighting <span data-info="dispute"></span></h3><div class="d">The Deduction Agent classified these claims and the expected-value rule opened disputes. The Briefing Agent drafts the claim and the replies - review the draft, add the buyer's AP email, and send it from here. Every send is recorded in the Outbox below with its true status.</div>${DESK.map((f,i)=>deskCard(f,i)).join("")}${CHASE.length?`<h3 style="margin-top:18px">Unmatched payments - chase the remittance</h3><div class="d">These payments matched nothing, so the cash sits unapplied. The platform does not guess: it asks the payer which invoices the money was for. Draft the chase email here and send it from here.</div>${CHASE.map((f,i)=>chaseCard(f,i)).join("")}`:""}<div id="outbox-strip"></div></div>`;
+  el.innerHTML=`<div class="panel"><h3>Dispute desk - deductions worth fighting <span data-info="dispute"></span></h3><div class="d">The Deduction Agent classified these claims and the expected-value rule opened disputes. The Briefing Agent drafts the claim and the replies - review the draft, add the buyer's AP email, and send it from here. Every send is recorded in the Outbox below with its true status.</div>${DESK.map((f,i)=>deskCard(f,i)).join("")}${CHASE.length?`<h3 style="margin-top:18px">Unmatched payments - chase the remittance <span data-info="chaseno"></span></h3><div class="d">These payments matched nothing, so the cash sits unapplied. The platform does not guess: it asks the payer which invoices the money was for. Draft the chase email here and send it from here.</div>${CHASE.map((f,i)=>chaseCard(f,i)).join("")}`:""}<div id="outbox-strip"></div></div>`;
   loadOutbox();
   DESK.forEach((f,i)=>fillDeskDraft(i));
   CHASE.forEach((f,i)=>fillChaseDraft(i));
+  fillInfo();
 }
 function splitSubject(text){
   const t=(text||"").trim();
@@ -516,7 +518,8 @@ function sendChaseMail(i,btn){ sendMailGeneric("chase", CHASE[i].payment_id, $("
 async function loadOutbox(){
   const el=$("outbox-strip"); if(!el) return;
   try{ const o=await api("/api/v1/mail/outbox");
-    el.innerHTML=`<h3 style="margin-top:18px">Outbox</h3><div class="d">${o.configured?pill("Mailbox configured - sends go out from "+esc(o.from),"ok"):pill("No mailbox configured - sends are recorded, not sent","warn")} Every send from this product is recorded here with its true status - a mail is only ever shown as sent when the mail server accepted it.</div>`+(o.mails.length?`<table><tr><th>When (UTC)</th><th>To</th><th>Subject</th><th>Kind</th><th>Status</th></tr>${o.mails.slice(0,10).map(m=>`<tr><td>${esc((m.created_at||"").slice(5,16).replace("T"," "))}</td><td>${esc(m.to)}</td><td>${esc(m.subject)}</td><td>${esc(m.kind)}</td><td>${pill(m.status==="sent"?"Sent":m.status==="failed"?"Failed":"Recorded - not sent", m.status==="sent"?"ok":m.status==="failed"?"bad":"warn")}</td></tr>`).join("")}</table>`:"<small>Nothing sent yet.</small>");
+    el.innerHTML=`<h3 style="margin-top:18px">Outbox <span data-info="outbox"></span></h3><div class="d">${o.configured?pill("Mailbox configured - sends go out from "+esc(o.from),"ok"):pill("No mailbox configured - sends are recorded, not sent","warn")} Every send from this product is recorded here with its true status - a mail is only ever shown as sent when the mail server accepted it.</div>`+(o.mails.length?`<table><tr><th>When (UTC)</th><th>To</th><th>Subject</th><th>Kind</th><th>Status</th></tr>${o.mails.slice(0,10).map(m=>`<tr><td>${esc((m.created_at||"").slice(5,16).replace("T"," "))}</td><td>${esc(m.to)}</td><td>${esc(m.subject)}</td><td>${esc(m.kind)}</td><td>${pill(m.status==="sent"?"Sent":m.status==="failed"?"Failed":"Recorded - not sent", m.status==="sent"?"ok":m.status==="failed"?"bad":"warn")}</td></tr>`).join("")}</table>`:"<small>Nothing sent yet.</small>");
+    fillInfo();
   }catch(e){}
 }
 function deskTone(i,t,btn){ DESK[i].tone=t; btn.parentElement.querySelectorAll("button[data-tone]").forEach(b=>b.classList.toggle("on",b===btn)); fillDeskDraft(i); }
@@ -726,7 +729,7 @@ function renderMailList(){
   const cat=HUB_CAT, items=h[cat]||[];
   if(!items.length){
     el.innerHTML={disputes:"<small>No dispute claims in the latest run - no deduction met the expected-value rule.</small>",
-      chases:"<small>No unidentified wires in the latest run - every payment found its invoices or was stopped as a duplicate before matching.</small>",
+      chases:"<small>No wires are waiting on identification or a missing amount in the latest run.</small>",
       settlements:"<small>No cleared payments in the latest run yet.</small>",
       dunning:"<small>Nothing open after the run - the whole book is settled.</small>"}[cat];
     return;
