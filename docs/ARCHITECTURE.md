@@ -1,493 +1,141 @@
-# AutoCash - Architecture and System Design
-AutoCash product pack, document 3 of 8. Previous: Market and Segment
-Research. Next: Implementation Guide.
-This document describes the system as it runs today. Where a capability
-is a design for a later stage rather than built software, the text says
-so in plain words and the section is labelled as design or roadmap.
+# Architecture and System Design
 
-## 1. First principles
-Cash application is a conservation problem with an information problem
-on top.
+AutoCash product pack, document 3 of 8. Previous: Market and Segment Research. Next: Implementation Guide.
 
-- Conservation: every cent received must be allocated to invoices,
-  discounts, deductions or an explained residual. The ledger must
-  balance exactly. Approximately matched is a failed close.
-- Information: the evidence for the allocation arrives as unstructured,
-  error-prone remittance text, often incomplete, sometimes wrong.
-
-The architecture follows from that split. Probabilistic components
-(parsing, classification, prediction) may only propose. Deterministic
-components (the solver, accounting policy, the posting builder) decide,
-and they must reconcile to the cent. Anything that cannot be reconciled
-becomes a tracked exception with a recommended action, never a silent
-write-off.
-
-## 2. High-level system architecture
-One container image. Inside it: a FastAPI application (Python), a
-static frontend served by the same process, a compiled Rust kernel
-binary, and the Tesseract OCR engine. State lives in SQLite databases
-on a data directory: one database file per tenant, in WAL mode, plus
-per-session workspace databases. There is no separate job server and no
-external queue in this version; a reconciliation run executes inside
-the request that starts it and records every step as it goes. That is
-a deliberate trade: the run sizes this product targets complete in
-seconds, and the audit trail is simpler when the record is written by
-the code that did the work.
+## 3.1 High-Level System Architecture
+AutoCash is engineered as a modular, four-layer system:
+1. **Presentation Layer (`frontend/`):** A 14-page zero-build JavaScript application organized into three operational groups (`OPERATE`, `INSIGHT & GOVERNANCE`, `EVALS & ARCHITECTURE`) with lazy tab hydration, XSS-safe rendering, and optimistic UI updates.
+2. **API and Isolation Layer (`backend/app/api.py`, `tenants.py`):** A FastAPI service providing REST endpoints under `/api/v1/*`, per-visitor workspace sessions carried by the `X-Workspace-Session` header (full UUID), LRU session cache management, and role-aware policy validation.
+3. **Six-Agent Execution Layer (`backend/app/batch.py`, `solvers.py`, `rust_bridge.py`):** Orchestrates Capture, Linking, Matching, Deduction, Policy, and Briefing in sequence, ordered by payment evidence specificity.
+4. **Persistence and ERP Layer (`backend/app/repository.py`, `erp_sap.py`, `mail.py`):** SQLite databases running in Write-Ahead Logging (`WAL`) mode with atomic compare-and-set transactions, paired with an SAP S/4HANA `BAPI_ACC_DOCUMENT_POST` generator and a four-stream Outbound Mail Hub.
 
 ```text
-+------------------------------------------------------------------+
-| Presentation layer (frontend/)                                   |
-| 14 views in 3 groups, served by the API process, no business     |
-| logic of its own: every figure is fetched from the API           |
-+------------------------------------------------------------------+
-| API and isolation layer (backend/app/api.py)                     |
-| REST under /api/v1, X-Workspace-Session workspace isolation,     |
-| X-Tenant-Id tenancy, role-aware policy validation                |
-+------------------------------------------------------------------+
-| Six-agent execution layer (batch.py, solvers.py, rust_bridge.py) |
-| Capture, Linking, Matching, Deduction, Policy, Briefing,         |
-| executed in evidence order and recorded per run                  |
-+------------------------------------------------------------------+
-| Persistence and ERP layer (repository.py, erp_sap.py, mail.py)   |
-| SQLite WAL per tenant, balanced BAPI_ACC_DOCUMENT_POST builder,  |
-| outbox with honest recorded_not_sent states until SMTP is set    |
-+------------------------------------------------------------------+
++-----------------------------------------------------------------------------+
+|                        14-Page Enterprise Workspace                         |
+|  OPERATE (01-06)    |    INSIGHT & GOVERNANCE (07-09)    |   EVALS (10-14)  |
++-----------------------------------------------------------------------------+
+                                       |
+                   HTTPS REST API (/api/v1/*) + X-Workspace-Session
+                                       |
++-----------------------------------------------------------------------------+
+|            Evidence-Sorted Six-Agent Orchestrator (batch.py)                |
+|  [1. Capture] -> [2. Linking] -> [3. Matching] -> [4. Deduction]            |
+|                               -> [5. Policy]   -> [6. Briefing]             |
++-----------------------------------------------------------------------------+
+         |                             |                             |
++-----------------+         +---------------------+         +-----------------+
+| Ingestion & AI  |         | Hybrid Math Engine  |         | ERP & Comms     |
+| - Gemini Client |         | - Rust FFI Kernel   |         | - SAP S/4HANA   |
+| - Regex Parser  |         | - Sparse HiGHS MILP |         |   BAPI + EBRR   |
+| - Ledger Check  |         | - Uniqueness Probe  |         | - 4-Stream Mail |
++-----------------+         +---------------------+         +-----------------+
+                                       |
++-----------------------------------------------------------------------------+
+|       SQLite WAL Repository (Per-Session Isolation + Audit Trail)           |
++-----------------------------------------------------------------------------+
 ```
 
-## 3. Workspaces, sessions and tenancy
-A tenant holds the standing data: invoices, payments, policy, audit.
-Two demo tenants ship in the product (demo, the US book, and demo-eu);
-the tenant header is X-Tenant-Id. A workspace is one reviewer's
-working copy of a tenant. Each browser session receives its own
-workspace, identified by the X-Workspace-Session header carrying the
-full session UUID, which the frontend attaches to every call, so two
-people opening the same link never see or disturb each other's runs.
-Session repositories are cached in memory with an LRU cap of 128.
+## 3.2 Evidence-Specificity Batch Ordering
+In real lockbox batches, multiple wires from the same customer often arrive together. If an unreferenced wire is processed first, FIFO weighting might assign it an open invoice that a later wire in the same batch explicitly names by invoice ID.
 
-Loading a case stages data into the workspace only; nothing executes
-until the run is started. The workspace reports its own state (empty,
-staged, executed) and every read model derives from it, which keeps
-all screens in agreement about what has and has not run.
-
-One boundary is stated honestly: switching tenant isolates data, runs
-and policy completely, but it does not remap currency or the ERP chart
-of accounts. Those are properties of the tenant's book, not of the
-switcher.
-
-## 4. The reconciliation pipeline
-A run moves through six recorded agents, in order:
-
-1. Capture: reads the staged payments, blocks exact duplicates before
-   matching (a SHA-256 fingerprint of payer, amount and currency),
-   and reports the staged totals.
-2. Linking: resolves each payer to a customer (exact name, learned
-   alias, or a stated fuzzy match) and restricts the candidate
-   invoices.
-3. Matching: solves each payment against its candidate invoices (see
-   section 5) and records the derivation for every outcome.
-4. Deduction: classifies claimed deductions, checks them against the
-   customer's history, and values disputes.
-5. Policy: applies the automation rules to each solved match: post
-   it, hold it for a person (with the reason), or refuse it.
-6. Briefing: composes the executive case brief and the settlement
-   drafts from the run's final records.
-
-Every step writes a run-step record with its status, its measured time
-and its evidence, retrievable at GET /api/v1/runs/{run_id}/agents. The
-agent strip on screen is rendered from those records, not from a
-separate progress guess.
-
-## 5. The matching engine
-
-### 5.1 Formulation, in plain text
-Money is integer cents everywhere; floats never carry money. For one
-payment of P cents, the candidate pool is a set of open invoices of a
-single customer in a single currency. For each candidate invoice i:
-
-```text
-gross_i      = open balance of invoice i, in cents
-discount_i   = the early-payment discount available on invoice i, in cents
-x_i          = 1 if invoice i is selected, else 0
-y_i          = 1 if the discount on invoice i is taken, else 0
-take_claim   = 1 if the payment's claimed deduction is accepted, else 0
-s_plus       = unexplained remainder in one direction, in cents (0 or more)
-s_minus      = unexplained remainder in the other direction, in cents (0 or more)
-
-Cash conservation (an equality, never an approximation):
-  sum over i of (gross_i x x_i - discount_i x y_i)
-      - claimed deduction x take_claim + s_plus - s_minus = P
-
-A discount can only be taken on an invoice that is selected:
-  y_i is at most x_i, for every i
-
-Objective (minimise):
-  - (1 + age_days_i x 0.05) for each selected invoice
-      (a reward for selecting, stronger for older invoices: FIFO pressure)
-  + 50 if a discount is taken on an invoice
-  + 10 if the claimed deduction is accepted
-  + 1,000,000 x |residual| in cents
-      (dominant: unexplained cash is the enemy)
-```
-
-The solver is mixed-integer linear programming (scipy.optimize.milp,
-HiGHS) under that equality, with a hard time limit on every call. A greedy first-fit matcher is kept
-permanently as the benchmark the solver must beat; the evaluations
-endpoint runs both over labelled cases and reports the comparison,
-and the product's benchmark claims come only from that comparison.
-
-### 5.2 Candidate restriction and hard boundaries
-Before any solving, each payment's candidate invoices are narrowed in
-a cascade (stated references first, then purchase-order numbers, then
-the payer's own open invoices, then the full ledger as a last resort).
-This bounds the hard part of the problem in practice. Two boundaries
-are hard, not preferences: a candidate must share the payment's
-currency, and a payment can only ever clear one customer's invoices
-(a whole-ledger search is solved per customer and the best
-single-customer answer is taken).
-
-### 5.3 Processing order is evidence order
-A batch is solved in evidence order, never in the order the wires
-happen to sit in the file. Each payment carries an evidence rung, and
-the run sorts by it before solving:
+To prevent this conflict, `batch.py` sorts all staged payments by **evidence specificity** before running the solver loop. Each payment carries an evidence rung, and the run sorts by it:
 
 | Rung | Evidence | Meaning |
 | :--- | :--- | :--- |
-| 0 | reference, po | The wire names its invoices, or its purchase order |
-| 1 | ocr_reference | The reference was recovered by OCR repair |
-| 2 | amount_payer, customer_ledger | Payer and amount point at the customer's ledger |
-| 3 | fuzzy_payer | The payer matched by fuzzy name evidence |
-| 4 | all_ledger | Nothing but a whole-ledger search |
-| 5 | none | No usable evidence |
+| 0 | `reference`, `po` | The wire names its invoices, or its purchase order |
+| 1 | `ocr_reference` | The reference was recovered by OCR repair |
+| 2 | `amount_payer`, `customer_ledger` | Payer and amount point at the customer's own ledger |
+| 3 | `fuzzy_payer` | The payer matched by fuzzy name evidence |
+| 4 | `all_ledger` | Nothing but a whole-ledger search |
+| 5 | `none` | No usable evidence |
 
-An unreferenced wire can therefore never consume an invoice that a
-referenced wire in the same batch was sent to pay. The order used is
-recorded in the Matching Agent's evidence for every run.
+The order actually used is recorded in the Matching Agent's evidence for every run, so the processing sequence is itself auditable.
 
-### 5.4 Ambiguity and evidence rules
-An exact set is not automatically a confident one. If several distinct
-invoice sets sum exactly to a wire that names none of them, the result
-is a proposal for a person (status PROPOSED) with confidence capped at
-0.75, never a posting. Matches reached on weak evidence carry their
-own caps: fuzzy_payer and all_ledger matches are capped at 0.78
-confidence, below the auto-post threshold. A match the policy accepts
-posts; a match it questions holds with the reason stated.
+## 3.3 Mathematical Formulation of the Matching Engine
 
-### 5.5 Solver integrity guard
-Solver tolerances can accept a set that is a few cents short at
-seven-figure amounts; this was observed in testing, not hypothesised.
-The engine therefore re-verifies every returned set in exact integer
-arithmetic. A set that does not reconcile is cut from the problem and
-the solver retries, at most 6 attempts, before returning an honest
-no-match with a verification note. This guard has its own regression
-test.
+### Variables and Parameters
+For a single payment of P cents and a candidate pool of n open invoices belonging to the same customer and currency, the problem has exactly 2n + 3 decision variables:
+* I_i: Open balance of candidate invoice i in {1, ..., n} in cents (integer).
+* discount_i = round(I_i x discount_rate_i): the early-payment discount available on invoice i, in cents.
+* C: Claimed deduction amount on the payment in cents (0 when the payment claims none).
+* x_i in {0, 1}: Binary decision variable equal to 1 if invoice i is selected (paid at gross I_i).
+* d_i in {0, 1}: Binary decision variable equal to 1 if the discount on invoice i is taken (the invoice then settles for I_i - discount_i).
+* take_claim in {0, 1}: Binary decision variable equal to 1 if the claimed deduction is accepted.
+* s^+, s^- (continuous, >= 0): Non-negative slack variables representing unexplained underpayment (s^+) or overpayment (s^-) in cents. The residual is s^+ - s^-.
 
-### 5.6 The Rust kernel, in its exact role
-The subset-sum step also exists as a small Rust program. It is a
-compiled binary, invoked over stdio with a JSON payload; it is not a
-shared library and nothing loads it through FFI. Its role is precise:
-on plain payments (no discounts, no claimed deduction) it attempts the
-exact set first, and it decides the payment only when that set is
-provably the unique exact set. Ties, discounts, deductions and
-residuals are judged by the MILP. The kernel is proven equivalent to
-the Python implementation on a 203-case generated suite, and the
-diagnostics endpoint re-probes that equivalence live on every check.
-Its path is configured by AUTOCASH_KERNEL_BIN.
-
-### 5.7 Idempotency, settlement and partial payments
-A run is idempotent by construction: only pending payments are solved,
-payments that already carry a match or exception record in the
-workspace are never solved twice, and re-executing a run returns the
-standing run. An auto-posted match settles its invoices immediately,
-so no later run can allocate them again.
-
-Settlement on approval follows the money. Approving a fully covered
-match settles its invoices. Approving a PARTIAL payment does not: the
-applied amount is attributed across the lines (pro-rata, with the last
-line taking the rounding remainder), each invoice stays open with its
-gross reduced by what was actually applied, and the approval record
-carries the partial_application detail, so the unpaid remainder
-survives as a live receivable in the ledger, the forecast and future
-candidate pools. An overpayment settles its invoices in full; the
-excess is the customer's on-account credit.
-
-### 5.8 Unearned discounts
-When a solution takes an early payment discount on an invoice whose
-discount window had already closed (the invoice is past its due date),
-the discount is not treated as earned. It is recorded on the match
-and, where the payment carries no claim of its own, claimed back
-through the deduction machinery as reason code RC-12 (Unearned
-Discount), with the same expected-value decision as any other claim.
-Where a claim already exists, the unearned amount attaches to it.
-
-### 5.9 Counterfactuals
-For any invoice not chosen, the engine derives why not (amount, age,
-discount and residual arithmetic), available on demand as the why-not
-explanation. Outcomes are therefore never bare: an exact or
-policy-clean solution posts or holds per policy; a partial solution
-holds with its residual; an unsolvable payment becomes a reasoned
-refusal with zero posting lines.
-
-## 6. Confidence scoring and governance
-Confidence is computed from evidence provenance and mathematical
-precision, never from a zero residual alone. The governance rules live
-in tenant policy, are validated on write, and are snapshotted into
-every run. Defaults:
-
-| Policy field | Default | Meaning |
-| :--- | :--- | :--- |
-| automation_threshold | 0.90 | Confidence at or above which a match may auto-post |
-| maker_checker_threshold_cents | $100,000 | Value above which a second person must approve |
-| tolerance_writeoff_cents | $25 | Variances at or below this are written off, not disputed |
-| dispute_processing_cost_usd | $45 | Cost of pursuing a dispute, charged against expected recovery |
-| auto_dispute_min_recovery_usd | $100 | Minimum expected recovery for an automatic dispute |
-| residual_penalty | 1,000,000 | Solver objective weight on unexplained cents |
-| discount_penalty | 50 | Solver objective weight on taking a discount |
-| deduction_penalty | 10 | Solver objective weight on accepting a claimed deduction |
-| age_weight | 0.05 | Solver objective FIFO pressure toward older invoices |
-
-The built-in demo case discloses one deliberate deviation in its
-policy_note: its maker-checker threshold is set to $60,000 so that two
-of its payments demonstrate the hold. The product default is $100,000
-and the deviation is printed, not hidden.
-
-Decisions are atomic compare-and-set transitions: two approvers acting
-on the same match at the same moment cannot both succeed; the second
-receives a conflict. Approvals also teach the workspace: a confirmed
-payer-to-customer link is stored as a learned alias for later runs.
-
-## 7. Deduction intelligence
-A claimed deduction is classified into a reason-code taxonomy by
-keyword evidence, with the candidates and confidence recorded:
-
-| Code | Meaning |
-| :--- | :--- |
-| RC-02 | Damaged/Shortage Claim |
-| RC-05 | Pricing Discrepancy |
-| RC-07 | Promotional Allowance |
-| RC-09 | Freight Claim |
-| RC-11 | Tax Withholding |
-| RC-12 | Unearned Discount |
-| RC-99 | Other/Unclassified |
-
-The claimed amount is compared with the customer's claim history using
-a z-score; a spike above 2.5 is flagged anomalous. History is computed
-from the workspace's own stored matches, and it needs at least 3
-samples per customer; below that, a labelled baseline prior (100000 /
-40000) is used and the evidence says so.
-
-The dispute decision uses an expected-value rule:
+### Linear Constraints
+1. **Cash Conservation Equation:**
 
 ```text
-expected recovery = win probability x claimed amount - $45 processing cost
+sum over i of (I_i x x_i - discount_i x d_i) - C x take_claim + s^+ - s^- = P
 ```
 
-The win probability is a transparent heuristic: 0.94 when proof of
-delivery is verified clean, 0.35 otherwise. It is labelled as a
-heuristic in the data, on screen and in every document the system
-composes; it is not a trained model. An automatic dispute is raised
-only when proof of delivery is clean and the expected recovery exceeds
-$100. Small amounts inside the $25 tolerance are written off by
-policy. Nothing about this chain is hidden inside a model.
+2. **A discount can only be taken on an invoice that is selected:**
 
-## 8. AI services, and their limits
-One client wrapper carries every AI call: the key comes from the
-server environment only (GEMINI_API_KEY), the model name is read from
-the environment (GEMINI_MODEL) so operations can change it without a
-code change, the client timeout (GEMINI_TIMEOUT_S, default 40 seconds)
-sits below the hosting platform's request ceiling, and output length
-is capped. Gemini is live in the reference deployment, running
-gemini-3.5-flash-lite; a live probe of the parse route returned
-source=gemini in about 3.2 seconds.
+```text
+d_i <= x_i, for every i in {1, ..., n}
+```
 
-- Remittance parsing: Gemini returns schema-bound JSON for payer,
-  amount, references and deductions (POST /api/v1/parse). A
-  deterministic verifier then checks the result: totals must
-  reconcile with the extracted fields, and every invoice or PO
-  reference must exist in the open ledger. Invented references are
-  flagged by name. If the AI call fails, times out, is rate limited
-  or fails verification, a deterministic parser (patterns and rules,
-  no AI) produces the extraction instead, and the response states
-  which source produced it. The fallback is labelled deterministic,
-  never presented as AI. The health endpoint reports the AI mode and
-  the last AI error at all times.
-- File intake: uploads arrive as PDF (text layer), PNG or JPG (OCR),
-  plain text or email files, through POST /api/v1/import/file with a
-  JSON body carrying base64 content. Extraction feeds the same
-  verifier.
-- Draft composition: dispute, inquiry and reminder texts are composed
-  from the record, by the AI when available (POST /api/v1/ai/draft)
-  and by grounded templates otherwise. Dispute tones are strict,
-  contract and escalate. The reviewer always sees which source wrote
-  a draft.
-- The assistant (POST /api/v1/copilot): answers are built from the
-  product's own records (matches, exceptions, forecast, the live
-  approvals queue), with citations to those records, and questions
-  outside the records are refused plainly. It reads live state, so an
-  answer about the queue reflects decisions already taken. It cannot
-  post, approve or send anything.
+3. x_i, d_i and take_claim are binary; the two slacks are continuous and unbounded above, so the problem is always feasible and any unexplained cash is priced into the objective, never hidden.
 
-## 9. Forecast and collections
-The forecast consumes only the residual ledger: the invoices still
-open after the latest run, at their post-reconciliation balances,
-with settled invoices removed by the same records the run produced.
-It projects eight weeks, runs a Monte Carlo simulation (400
-simulations) for P10, P50 and P90 bands, and accepts what-if changes
-(POST /api/v1/forecast/whatif) against the same position. Collections
-priorities and dunning segments (GET /api/v1/collections) derive from
-the same residual set, so the forecast, the ledger and the mail hub
-cannot quietly disagree.
+### Objective Function
 
-The payment-delay model behind the forecast is stated with its basis:
-mean absolute error 2.948 days against a 7.665-day naive baseline, and
-a deduction-validity AUC of 0.846, trained on a disclosed synthetic
-generator (1,200 rows, 960 training and 240 held out, six customer
-profiles with learnable delay signal). Each invoice is predicted from
-its own facts: its amount, its own payment terms derived from its age
-and due days (clamped to the 15 to 60 day range the model was
-validated on), and the real current calendar month. A customer the
-model has never seen is scored with no customer-specific component,
-never with another customer's behaviour borrowed under its name. A
-partially paid invoice forecasts at its remaining balance, and the
-ledger shows the partial application (amount applied against the
-original invoice total) on the invoice's own row. Retraining on real
-payment history is the model v2 roadmap item (see section 16).
+```text
+minimise   1,000,000 x (s^+ + s^-)
+         + 50 x (number of discounts taken)
+         + 10 x take_claim
+         - sum over i of w_i x x_i
+where w_i = 1.0 + 0.05 x age_days_i
+```
 
-## 10. The SAP posting pack
-For every cleared payment, the posting builder creates a DZ clearing
-document whose journal lines come from the match's own derivation
-equation. Because the inputs already reconcile, debits equal credits
-by construction, and the builder asserts the balance on every
-document. The chart of accounts, exactly as the code holds it:
+The residual weight dominates by six orders of magnitude: any set that explains the payment exactly beats every set that leaves a residual, whatever else it selects. The per-invoice reward w_i grows with invoice age, providing FIFO pressure toward older invoices without overriding exact cent conservation. The discount and deduction terms are small positive penalties, so the solver takes a discount or accepts a claim only when the arithmetic genuinely needs it. Every solved match stores its objective terms (the value of each term above, for the set actually chosen) and its confidence derivation, so a result can be explained term by term.
 
-| GL | Account | Role in the journal |
-| :--- | :--- | :--- |
-| 113100 | Cash - operating account | Debit: the payment received |
-| 121000 | Trade receivables - customer control | Credit: the gross cleared against invoices |
-| 121500 | Disputed receivables - deduction claims | Debit: disputed amounts reclassified for recovery |
-| 121600 | Residual receivable - part-paid invoices | Debit: an underpayment's unpaid remainder |
-| 121900 | Unapplied cash - customer on-account | Credit: an overpayment's excess, held as the customer's credit |
-| 119900 | Unapplied cash suspense | Only for wires that match nothing at all, when parked |
-| 415000 | Sales discounts allowed | Debit: earned discounts taken |
-| 529000 | Deductions accepted (within policy) | Debit: deductions accepted under policy |
+### Hybrid Rust + Sparse HiGHS Execution and Uniqueness Verification
+1. **Rust Subset-Sum Kernel (`rust-kernel/`):** A compiled binary (`autocash-kernel`) invoked by `rust_bridge.py` over stdio with a JSON payload - not a shared library, and nothing is loaded through FFI. On plain payments (no discounts, no claimed deduction) it attempts the exact set first, and it decides the payment only when that set is provably the unique exact set. Its equivalence to the Python reference implementation is proven on a 203-case generated suite, and the diagnostics endpoint re-probes that equivalence live.
+2. **Sparse HiGHS MILP (`solvers.py`):** Formulates the constraint matrix using `scipy.sparse.csc_matrix` with an explicit `time_limit` of 2.0 seconds and a relative gap tolerance of 1e-6, so large candidate pools never block a worker thread. A greedy first-fit matcher is kept permanently as the benchmark the solver must beat; the evaluations endpoint runs both over labelled cases.
+3. **Uniqueness and Integrity Verification:** Whenever an unreferenced wire achieves an exact zero-residual match, the engine counts how many distinct invoice sets sum exactly to the payment (a bounded enumeration that stops at two: unique, or not unique). If a second distinct set also yields zero residual, `ambiguous_tie` is recorded, confidence is capped at 0.75, and the match is held as `PROPOSED` for human review. Separately, every set the MILP returns is re-verified in exact integer cents before it is believed - with seven-figure amounts, solver scaling tolerances can accept a set that is a few cents short - and a set whose true residual differs from the solver-reported one is cut from the problem and the solve repeats, at most 6 attempts, before an honest no-match is returned with a verification note.
 
-The balancing line follows the residual's direction: an underpayment's
-remainder posts to residual receivable (the customer still owes it,
-and it stays visible), an overpayment's excess posts to on-account
-credit. Neither is parked in generic suspense; suspense is reserved
-for wires that match nothing at all. Disputed deductions produce a
-separate reserve journal that reclassifies the claimed amount to
-disputed receivables (ASC 606 / IFRS 15), leaving revenue untouched.
+## 3.4 Confidence Scoring and Governance Formula
+Confidence is computed from evidence provenance and mathematical precision, never from zero residual alone:
 
-Document numbers are deterministic. A cleared auto-posted match takes
-DZ-1400 followed by 6 digits derived from the SHA-256 of its match ID.
-An approved match carries the document ID issued at approval: DZ-
-followed by the first 10 characters of its SHA-256 fingerprint. Every
-cleared document's status is STAGED_FOR_SAP_POSTING; held matches keep
-preview semantics with no document number until they clear. Each
-document carries the full BAPI_ACC_DOCUMENT_POST payload (JSON) in the
-shape an S/4HANA system expects, with the resolved customer on every
-receivable line. The run's documents are listed at GET
-/api/v1/erp/run-documents; a single payment's document is at GET
-/api/v1/payments/{payment_id}/erp-document.
+```text
+base = 1.0                                    if residual is 0
+     = max(0.3, 1 - |residual| / payment)     otherwise
 
-Approving a refusal creates no document at all: it records
-PARKED_SUSPENSE with the amount in suspense GL 119900 and an audit
-entry. The pack is produced for review; writing it into a live ERP is
-the connector track, stated as such in the PRD.
+if the match came from an explicit reference or a purchase order:
+    base = base + 0.03, at most 1.0
 
-## 11. Mail and the outbox
-Every send intent is written to a per-tenant outbox with its kind, its
-reference and its text. The Mail Hub (GET /api/v1/mail/hub) groups four
-streams: dispute claims, unidentified-wire chases, settlement
-confirmations and dunning reminders. Until SMTP credentials are
-configured (AUTOCASH_SMTP_HOST, AUTOCASH_SMTP_PORT, AUTOCASH_SMTP_USER,
-AUTOCASH_SMTP_PASSWORD, AUTOCASH_MAIL_FROM, AUTOCASH_SMTP_TLS), a send
-is recorded with the status recorded_not_sent and the reason stored
-with the record and shown to the reviewer. The status sent is used
-only when a mail server has accepted the message. All sends, in either
-state, are audit events.
+caps, applied last:
+    ambiguous exact tie (section 3.3):  at most 0.75
+    fuzzy_payer and all_ledger matches: at most 0.78
+```
 
-## 12. Enterprise controls
-- Tenancy: one SQLite database per tenant, opened in WAL mode with a
-  5000 ms busy timeout; nothing crosses tenants.
-- Authentication: API keys are SHA-256 hashed at rest and shown once
-  at issuance. Roles: viewer, analyst, approver, admin. When no
-  bootstrap key (AUTOCASH_BOOTSTRAP_KEY) is configured, the deployment
-  runs in an explicitly labelled demo-open posture (GET /health prints
-  auth: dev-open); secured mode is the same build with the key set.
-- Approvals: maker-checker is policy, not code. The threshold lives in
-  the tenant's policy, is snapshotted into every run, and a decision
-  on a held match (POST /api/v1/matches/{match_id}/decision) settles
-  invoices in full, or to the extent paid for a partial payment,
-  issues the posting document and writes an audit entry.
-- Audit: decision and send entries carry a SHA-256 content fingerprint
-  that lets anyone recompute and verify the entry later (GET
-  /api/v1/audit).
-- Limits and observability: per-key rate limiting (300 requests per
-  minute by default, AUTOCASH_RATE_LIMIT_PER_MIN), a request ID on
-  every call, structured JSON logs, Prometheus metrics at GET
-  /metrics, a readiness check at GET /ready, and a diagnostics
-  endpoint (GET /api/v1/diagnostics) that reports dependency state,
-  the live Rust kernel equivalence probe and the AI mode and last
-  error. The diagnostics response redacts the mail password.
-- Export: the audit and SAP bundle is refused with a clear conflict
-  response until a run exists, because an export with nothing behind
-  it would be a hollow artefact.
+The caps are measured against the policy's automation threshold (0.90 by default): no weak-evidence match can reach the auto-post bar, however exact its arithmetic. Each match stores this derivation (base, bonus, cap, and the rule behind each) next to its objective terms.
 
-## 13. Frontend
-A static single page (fourteen screens) served by the API process, in
-four classic scripts (state, operate, insight, assist) over one
-stylesheet; there are no ES modules and no build step. It holds no
-business logic of its own: every figure is fetched from the API
-through one helper that attaches the workspace session header, and
-asset URLs carry version stamps so a new deployment is never masked
-by a browser cache. Interface state that must survive navigation
-(brief open or closed, mail category, draft sequence) is kept in the
-page session and guarded by sequence counters, so a slow response can
-never overwrite a newer screen. Interactive values are passed to
-handlers through data attributes, never interpolated into handler
-strings; a contract test scans the shipped scripts for the unsafe
-pattern and asserts zero occurrences.
+* **Deduction Expected Value (EV) Formula:**
 
-## 14. Build and release
-The test suite (134 automated tests across 29 modules, plus the 4
-Rust kernel tests) gates the container build in continuous
-integration: a failing suite means no image. The image is built from
-the repository's Dockerfile in two stages (rust:1.82-slim compiles the
-kernel, then python:3.12-slim carries the application with the kernel
-binary and the OCR engine placed inside), serves on port 8080, and
-answers its healthcheck at /ready. Deployment is a service update on
-the hosting platform; there is no in-place mutation of a running
-version. The full release flow is the AWS Deployment Runbook
-(document 6).
+```text
+EV = p(win) x Deduction Amount - Processing Cost
+```
 
-## 15. Failure semantics, as built
-- Solver cannot solve a payment: the run completes, that payment is a
-  refusal or an exception with its reason, and the run summary counts
-  it. Never a server error.
-- AI unavailable at any point: the deterministic path answers, the
-  mode is labelled, and the error is visible on the health endpoint.
-- A duplicate payment: stopped before matching, recorded as an
-  exception, and never double-posted. Re-running a batch returns the
-  standing run rather than a second set of matches.
-- An approval on a refusal: parks the amount in suspense with an
-  audit entry and no posting document.
-- Data on the demonstration host is ephemeral by design (see the
-  Deployment Guide); a case reload restores the full demonstration in
-  one action.
+  where p(win) is a transparent heuristic - 0.94 when carrier Proof of Delivery is verified clean (`pod_verified_clean = True`), 0.35 otherwise - the processing cost is $45 by policy default, a dispute is auto-generated only when the proof of delivery is clean and EV exceeds the $100 minimum expected recovery, and claims at or below the $25 tolerance are written off without a dispute.
 
-## 16. Scaling path and roadmap (design, honestly labelled)
-The following are designs, not built software: stateless API replicas
-behind a shared queue and a shared rate-limit and metrics store
-(Redis-class); tenant databases migrated to Postgres (the schema
-avoids SQLite-only types in domain code for this reason); solver time
-budgets per payment with a documented heuristic handoff for very large
-candidate sets. The single-instance version is exact about its own
-limits in the Implementation Guide.
+## 3.5 SAP S/4HANA (`BAPI_ACC_DOCUMENT_POST`) and ASC 606 EBRR Design
+`backend/app/erp_sap.py` builds balanced double-entry clearing documents (`Doc Type DZ`, Company Code `1000`). The BAPI payload expresses each line with a debit/credit indicator (S/H); the journal lines are:
 
-Roadmap items, named as such in the PRD: model v2, whose delay and
-validity features include the customer's actual workspace payment and
-deduction history; and Save & Retrieve by Session ID, for named,
-restorable workspaces beyond the current per-session isolation.
+| Side | GL Account | Account Name | Accounting Treatment |
+| :--- | :--- | :--- | :--- |
+| **Debit** | `113100` | Cash - operating account | Exact cent amount of the incoming bank wire (P). |
+| **Debit** | `415000` | Sales discounts allowed | Earned early-payment discount cents (the sum of discount_i over selected invoices). |
+| **Debit** | `529000` | Deductions accepted (within policy) | A claimed deduction the policy accepts (within tolerance, or not worth contesting). |
+| **Debit** | `121500` | Disputed receivables - deduction claims | Isolates contested short-pays while recovery is in flight; a matching ASC 606 / IFRS 15 dispute-reserve journal (Event-Based Revenue Recognition) is generated alongside each dispute claim. |
+| **Debit** | `121600` | Residual receivable - part-paid invoices | Balances a partial payment so the unpaid balance remains open on the customer account, in the ledger and the forecast. |
+| **Credit** | `121000` | Trade receivables - customer control | Gross open invoice cents cleared, each AR line tagged with the resolved `CUSTOMER` ID. |
+| **Credit** | `121900` | Unapplied cash - customer on-account | The excess of an overpayment, held as the customer's on-account credit. |
+| **Credit** | `119900` | Unapplied cash suspense | Used only to park an unmatched (`NO_MATCH`) wire whose refusal a controller approved; never a balancing plug. |
+
+Every generated document enforces sum Debits - sum Credits = 0 in integer cents. Document numbers are deterministic: a cleared auto-posted match receives DZ-1400 plus 6 digits derived from the SHA-256 of its match ID, and an approved match receives DZ- plus the first 10 characters of its approval fingerprint, issued at decision time. Cleared documents carry the status STAGED_FOR_SAP_POSTING.
+
+---
 
 Version 3.0 | 3 Nov 2026 | Owner: C. Harsha Vardhana Reddy

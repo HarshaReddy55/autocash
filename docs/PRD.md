@@ -1,212 +1,79 @@
-# AutoCash - Product Requirements Document
+# Product Requirements Document
+
 AutoCash product pack, document 1 of 8. Next: Market and Segment Research.
 
-## 1. Executive summary
-AutoCash is an autonomous cash application and deduction recovery
-platform for mid-market and enterprise finance teams. Every business
-day, accounts receivable (AR) teams receive bank wires and lockbox
-payments while the evidence for those payments arrives separately, as
-remittance emails, PDFs and spreadsheets. Analysts spend hours matching
-lump-sum payments to open invoices by hand, investigating short-pays,
-and keying clearing journals into the ERP.
+**Author:** C. Harsha Vardhana Reddy (IIM Visakhapatnam | NIT Andhra Pradesh)
+**Platform Version:** Production Release v45
+**Live Deployment:** https://au-060cf7bb8b42492097645654b34ab8d6.ecs.ap-south-1.on.aws/
 
-AutoCash replaces that manual work with a six-agent pipeline (Capture,
-Linking, Matching, Deduction, Policy, Briefing) built on one rule:
-probabilistic components may propose, deterministic components decide.
-An AI parser and prediction models suggest; a mixed-integer solver under
-a cash conservation equation, working in exact integer cents, decides;
-and accounting policy governs what may post without a person. Every
-cent received lands somewhere auditable: an invoice, a discount, a
-deduction, or an explained residual. Anything that cannot be reconciled
-becomes a tracked exception with a recommended action. Nothing is
-silently written off, and no figure in the product is typed in by hand:
-every number on every screen is computed from the run in front of the
-user.
+## 1.1 Executive Summary
+AutoCash is an autonomous Order-to-Cash (O2C) cash application and deduction recovery platform built for mid-market and enterprise finance teams.
 
-## 2. Market context, stated carefully
-Vendors in this category advertise auto-match rates of 90 percent and
-above. Independent analyst benchmarking tells a different story: The
-Hackett Group (2025) measured a median auto-match rate near 70 percent
-across finance organisations, with the top third above 80 percent. The
-gap between the advertised number and the measured one is the problem
-this product is built on. The hard part of cash application is not the
-payments that match. It is the tail that does not, and what a team can
-prove about every decision afterwards. The full research, with sources,
-is document 2 of this pack.
+Every business day, corporate treasury and accounts receivable (AR) teams receive bank wires and lockbox payments alongside separate remittance emails, PDFs, and spreadsheets. Analysts spend hours manually matching lump-sum payments to open invoices, investigating short-pays, keying clearing journals into SAP, and emailing buyers for missing remittance details.
 
-## 3. Product thesis
-Cash application is a conservation problem with an information problem
-on top. The conservation half is exact: the ledger must balance to the
-cent. The information half is messy: remittance text is often
-incomplete, sometimes wrong. The product therefore separates proposing
-from deciding, re-verifies every solver answer in exact integer cents
-before believing it, and treats refusals as first-class outcomes: when
-nothing in the ledger explains a payment, the engine issues a reasoned
-refusal instead of forcing a match.
+AutoCash replaces manual spreadsheet reconciliation with a six-agent execution pipeline that:
+1. Reads incoming remittance files and verifies every invoice and purchase order reference against the open AR ledger.
+2. Links payments to the right customer across purchase order numbers, OCR typos, and subsidiary payer aliases.
+3. Solves invoice allocation to the exact cent using a compiled Rust subset-sum kernel and a High-Performance Mixed-Integer Linear Programming (HiGHS MILP) solver.
+4. Evaluates short-pays and unearned early-payment discounts using customer history and expected-value math.
+5. Enforces maker-checker governance rules before posting to the general ledger.
+6. Generates balanced SAP S/4HANA clearing journals and four streams of outbound customer emails.
 
-## 4. Target personas and business problems
+## 1.2 Target Personas and Business Problems
 
-| Persona | Daily responsibility | Core pain point | AutoCash outcome |
+| Persona | Daily Responsibility | Core Pain Point | AutoCash Outcome |
 | :--- | :--- | :--- | :--- |
-| AR cash application analyst | Match the day's wires and lockbox payments to open invoices; clear exceptions | Hours spent hunting for missing remittance references, repairing OCR errors, and testing invoice combinations in a spreadsheet | Routine wires and multi-invoice split wires post automatically; exceptions arrive pre-diagnosed with a derivation and a counterfactual explanation |
-| AR manager or approver | Own policy thresholds; give the second approval on high-value postings; review disputes before they are sent | Unapplied cash distorting the collections queue; write-offs taken to clear the queue rather than on merit | Maker-checker approvals with the reason for every hold stated; dispute claims valued by an expected-recovery rule before anyone sends them |
-| Corporate controller | Protect general ledger integrity and close the books on time | Clearing journals that do not balance; deduction leakage buried in suspense | Every cleared payment produces a balanced DZ clearing document and the full BAPI_ACC_DOCUMENT_POST payload, built from the match's own derivation |
-| CFO office | Cash forecast, collections priorities, dispute exposure | Forecasts built on stale ledger balances while cash sits unapplied | Forecast and collections computed from the post-reconciliation residual ledger, so every screen agrees with the analysts' position |
-| IT and integrators | Access control, ERP posting formats, audit exports | Black-box automation that cannot be replayed or audited | Hashed API keys, role-based access, a fingerprinted audit log, and a one-click export of the audit and SAP bundle |
+| **AR Cash Application Analyst** | Match daily lockbox wires to open invoices and clear exceptions. | Wastes 60% of the day hunting for missing remittance references, fixing OCR errors, and testing invoice combinations in Excel. | Routine and multi-invoice split wires post automatically; exceptions arrive pre-diagnosed with a ready-to-send buyer inquiry email. |
+| **Corporate Controller** | Protect general ledger integrity, enforce SOX controls, and close the books on time. | High unapplied cash balances in suspense accounts at month-end and premature write-offs of valid revenue. | Every clearing journal balances debits and credits to $0.00, respects maker-checker dollar caps, and isolates disputed deductions under ASC 606 / IFRS 15. |
+| **VP of Finance / Treasurer** | Maximize working capital, reduce Days Sales Outstanding (DSO), and forecast cash inflow. | Cash forecasts rely on stale ledger balances while hundreds of thousands of dollars sit unapplied or leaked in unchallenged deductions. | Live visibility into autonomous resolution rates, net cash posted, expected dispute recovery, and 30-day post-reconciliation cash inflow. |
 
-## 5. Core functional requirements
-All of the following is built, tested and running.
+## 1.3 Core Functional Requirements
 
-1. A staged workspace. Loading a case stages its invoices and payments
-   and changes nothing else. Reconciliation runs only when the user
-   executes it. Every screen states plainly which stage the workspace
-   is in, and actions that need a completed run say so instead of
-   showing stale data.
-2. A six-agent pipeline (Capture, Linking, Matching, Deduction, Policy,
-   Briefing). Each agent's work is recorded per run with its inputs,
-   its result and its measured time, and can be inspected on screen.
-3. A matching engine built on mixed-integer optimisation (MILP) under
-   a cash conservation equation, working in exact integer cents.
-   Candidate invoices are restricted per payment before solving. Every
-   set the solver returns is re-verified in exact cents before it is
-   believed. A greedy matcher is kept permanently as the benchmark the
-   solver must beat, and every non-match carries a counterfactual
-   explanation of why a given invoice was not chosen.
-4. Refusals as first-class outcomes. When nothing in the ledger
-   explains a payment, the engine issues a reasoned refusal instead of
-   forcing a match. The refusal sits in the approvals queue by design;
-   approving it parks the money in suspense (GL 119900) with an audit
-   entry, and it can never post to AR. No posting document is created
-   for money no invoice supports.
-5. Deduction intelligence. Claims are classified into a reason-code
-   taxonomy (RC-02, RC-05, RC-07, RC-09, RC-11, RC-12, RC-99) with
-   confidence, measured against the customer's history with a z-score
-   anomaly check, and valued by an expected-recovery rule. The win
-   probability behind that rule is a transparent heuristic (0.94 with a
-   verified clean proof of delivery, 0.35 otherwise) and is labelled as
-   a heuristic everywhere it appears; it is not a trained model.
-6. An SAP posting pack. Every cleared payment produces a balanced DZ
-   clearing document and the full BAPI_ACC_DOCUMENT_POST payload an
-   S/4HANA system would receive, plus the ASC 606 / IFRS 15 reserve
-   journal for disputed deductions. Debits equal credits by
-   construction, because the amounts come from the match's own
-   derivation.
-7. An outbound mail hub. Dispute claims, unidentified-wire inquiries,
-   settlement confirmations and dunning reminders are composed from the
-   run's records, in selectable tones, ready for review. Until a
-   mailbox is configured, a send is recorded as recorded_not_sent with
-   the reason shown. The product never claims a mail was sent when it
-   was not.
-8. Forecast and collections. The forecast reads only the residual
-   ledger left after reconciliation, over an 8-week horizon, with
-   Monte Carlo P10/P50/P90 bands and a what-if view. Collections
-   priorities and dunning come from the same residual position, so
-   every screen agrees.
-9. A grounded assistant. It answers questions from the product's own
-   records, cites them, refuses questions the records cannot answer,
-   and reads live state: if a match has been decided, its answer about
-   the approvals queue reflects that decision immediately.
-10. AI remittance parsing with a verifier. Gemini extracts structured
-    fields from remittance text (typed, pasted, or read from PDF and
-    image files by OCR). A deterministic verifier then checks every
-    extracted reference against the open ledger. If the AI is
-    unavailable, slow or wrong, a deterministic parser produces the
-    answer instead and the response says so, labelled deterministic.
-    The AI never posts anything.
-11. An enterprise layer. One database per tenant; per-browser-session
-    workspaces so two reviewers never disturb each other; API keys
-    SHA-256 hashed at rest and shown once; role-based access (viewer,
-    analyst, approver, admin); per-key rate limiting; maker-checker
-    approvals; an audit log whose decision entries carry a SHA-256
-    content fingerprint.
-12. Evaluation and health surfaces. A labelled benchmark compares the
-    solver against the greedy baseline case by case. A diagnostics
-    view reports the state of every dependency, including a live
-    equivalence probe of the Rust kernel and the current AI mode and
-    last AI error. Nothing in the product hides which mode it is in.
+### A. Two-Stage Execution Lifecycle (Staged to Reconciled)
+To give operators and auditors complete visibility into what came in versus what the engine computed, every case follows a two-stage workflow:
+* **Stage 1 (Staged Portfolio Readiness):** Loading a case or importing files stages the open invoices and incoming bank wires without running the solver behind the scenes. The Dashboard displays the exact raw portfolio waiting for execution (for example, $1,003,430.00 across 19 open invoices versus $682,135.00 across 16 incoming bank wires in the flagship demo case).
+* **Stage 2 (Six-Agent Live Execution):** Clicking **Run Reconciliation** executes the six agents in sequence, records true millisecond timings and handoff payloads on a permanent audit strip, settles auto-posted invoices, and unlocks downstream SAP journals, outbound emails, cash forecasts, and evaluations.
 
-## 6. Product surface (14 dedicated views)
+### B. The Six-Agent Pipeline
+1. **Capture Agent:** Extracts payer name, wire amount, payment date, invoice numbers, purchase order numbers, and claimed deductions from CSVs, pasted emails, `.eml` files, PDFs, and images. Uses Gemini when an API key is active and a deterministic regex parser as a fallback. A ledger verifier checks every extracted reference against open invoices so the AI can never invent a reference.
+2. **Linking Agent:** Narrows the open ledger to candidate invoices for the payment using a five-step evidence hierarchy:
+   * Step 1: Verified exact invoice IDs from remittance text.
+   * Step 2: Verified purchase order (`PO-`) numbers mapped to open invoices.
+   * Step 3: Levenshtein edit-distance-1 OCR character repair verified against open invoice IDs.
+   * Step 4: Learned payer-to-customer aliases from prior controller approvals.
+   * Step 5: Jaro-Winkler (0.88 threshold) fuzzy entity matching.
+3. **Matching Agent:** Solves the integer-cent cash conservation equation across candidate invoices using the compiled Rust subset-sum kernel and sparse HiGHS MILP solver. Computes a plain-English mathematical derivation and a counterfactual proof explaining why unselected invoices for that customer were excluded.
+4. **Deduction Agent:** Categorizes short-pays into the reason-code taxonomy (RC-02 Damaged/Shortage Claim, RC-05 Pricing Discrepancy, RC-07 Promotional Allowance, RC-09 Freight Claim, RC-11 Tax Withholding, RC-12 Unearned Discount, RC-99 Other/Unclassified), verifies carrier Proof of Delivery (POD) status, and calculates a deduction z-score against the customer's historical deduction behavior (a spike above 2.5 is flagged; below 3 historical samples a labelled baseline prior is used).
+5. **Policy Agent:** Evaluates every solved match against four configurable governance rules:
+   * Minimum confidence required for touchless auto-posting.
+   * Maker-checker dollar threshold requiring human sign-off.
+   * Minimum expected recovery value (EV) required to contest a deduction.
+   * Maximum residual tolerance for automatic small-balance write-off.
+6. **Briefing Agent:** Produces an executive run summary, prepares SAP S/4HANA clearing documents, and populates the Outbound Mail Hub.
 
-| Group | Views |
-| :--- | :--- |
-| OPERATE | 01 Dashboard, 02 Use Cases, 03 Upload Center, 04 Run Reconciliation, 05 SAP BAPI & EBRR, 06 Outbound Mail Hub |
-| INSIGHT & GOVERNANCE | 07 Ledger, 08 Forecast and Collections, 09 Policy Studio |
-| EVALS & ARCHITECTURE | 10 Evaluations, 11 Agent Health, 12 Methodology, 13 Architecture, 14 Product Thinking |
+### C. Financial and Accounting Guardrails
+* **Integer-Cent Precision:** Every invoice amount, payment amount, discount, deduction, and SAP journal line is stored and solved in integer cents.
+* **Single-Customer and Single-Currency Invariant:** A payment can never match across two different customers or across mismatched currencies (such as `EUR` against `USD`).
+* **Ambiguous Subset-Sum Tie Protection:** When an unreferenced lump-sum wire can be satisfied by two or more distinct combinations of open invoices for the same customer, the solver detects the tie, caps confidence at 0.75, and routes the payment to human maker-checker review (`PROPOSED`) instead of guessing.
+* **Strict Separation of Approvals and Exceptions:** Only valid invoice allocations held by policy thresholds (`PROPOSED`) can be approved into AR posting in the Maker-Checker queue. An unmatched wire (`NO_MATCH`) with zero linked invoices also sits in the queue, by design, but it can never post to AR: approving it parks the money in Unapplied Cash Suspense (GL 119900) with an audit entry and no posting document, and rejecting it routes it to a buyer remittance inquiry.
 
-## 7. Measured results (flagship case and benchmarks)
-Verified on labelled synthetic data in this repository. These are
-engineering verification figures, not customer results; no customer
-metric may be quoted until a pilot produces one.
+## 1.4 Product Surface (14 Dedicated Views)
+* **OPERATE:** `01 Dashboard`, `02 Use Cases`, `03 Upload Center`, `04 Run Reconciliation`, `05 SAP BAPI & EBRR`, `06 Outbound Mail Hub`
+* **INSIGHT & GOVERNANCE:** `07 Ledger`, `08 Forecast and Collections`, `09 Policy Studio`
+* **EVALS & ARCHITECTURE:** `10 Evaluations`, `11 Agent Health`, `12 Methodology`, `13 Architecture`, `14 Product Thinking`
 
-The built-in demo case is one realistic day of receipts: 19 open
-invoices totalling $1,003,430 of open AR, and 16 incoming payments
-totalling $682,135. A run of that case produces:
+## 1.5 Target Benchmarks (Flagship 16-Payment Case)
+* **Autonomous Resolution Rate:** 93.8% (15 of 16 incoming payments resolved with exact invoice math; 1 unknown-payer wire stopped safely as an exception).
+* **Touchless Auto-Post Rate:** 62.5% (10 of 16 payments totaling $411,800.00 auto-posted straight through; 5 payments totaling $223,150.00 held for one-click maker-checker sign-off).
+* **Dispute Recovery Identified:** $3,903.00 of expected recovery on the flagship dispute (a $4,200.00 shortage claim with verified clean proof of delivery, valued at the 0.94 win-probability heuristic net of the $45 processing cost). Unearned discounts are detected and claimed back by the same machinery (reason code RC-12).
+* **Execution Transparency:** Every agent records its measured time and evidence on the run itself; the flagship batch's per-agent timings are inspectable on the Run page and in the Agent Health view, and no latency figure is claimed beyond what those records show.
 
-- 10 payments auto-posted, totalling $411,800: a touchless rate of
-  62.5 percent of payments.
-- 5 payments solved and held for one-click maker-checker sign-off,
-  totalling $223,150, each with the reason for the hold stated (a
-  partial payment, two maker-checker value holds, an overpayment, and
-  one reasoned refusal).
-- 1 duplicate payment blocked before matching by its fingerprint.
-- Autonomous resolution of 93.8 percent (15 of 16 payments), counted
-  as zero-touch postings plus solved-and-held matches plus reasoned
-  refusals over all 16 payments. The definition is printed in the
-  product next to the figure.
-- The flagship dispute in the case: a $4,200 claim at a 0.94 win
-  probability (the labelled heuristic, proof of delivery verified
-  clean), giving $3,903 of expected recovery after the $45 processing
-  cost.
+---
 
-Benchmarks, computed live by the product's own endpoints:
-
-- Matching: the MILP solver scores accuracy 1.0 against the greedy
-  baseline's 0.8 on the 10 labelled ground-truth cases behind the
-  evaluations endpoint. All 10 scenario packs pass their checks.
-- Payment-delay model: mean absolute error 2.948 days against 7.665
-  days for a naive baseline. Deduction-validity model: AUC 0.846.
-  Basis, disclosed in the product: a synthetic generator with a
-  learnable signal, 1,200 rows (960 training, 240 held out), six
-  customer profiles. Retrain on real history when available.
-- Test suite: 134 automated tests across 29 modules, plus 4 Rust
-  kernel tests, all passing, and the suite gates every production
-  build in CI.
-
-North star for the product: the touchless cash rate at zero residual.
-
-## 8. Non-goals for this version
-- Live ERP write-back. Posting payloads are produced, balanced and
-  ready for review; direct posting into SAP, Oracle or NetSuite is the
-  integration track that follows.
-- Bank feed formats. Lockbox, BAI2 and MT940 parsers are roadmap; CSV,
-  API and file ingestion (including OCR) are live.
-- A trained dispute-outcome model. The win probability is a labelled
-  heuristic until real dispute outcomes exist to train on.
-- Shared multi-instance state. Rate limiting and metrics are exact for
-  a single instance; the shared-store design is specified in the
-  Architecture document and labelled there as design, not product.
-
-## 9. Risks and how the product answers them
-- AI invents a reference: the verifier checks every reference against
-  the open ledger before anything is staged, and parsing never posts.
-- The solver accepts an almost-right answer: every returned set is
-  re-verified in exact integer cents; a set that does not reconcile is
-  cut and the solver retries (at most 6 attempts) before the payment
-  is routed to a person with the reason.
-- A reviewer shares one link with many people: workspaces are isolated
-  per browser session, and the demo posture is a stated choice, with a
-  secured mode (bootstrap key, per-tenant API keys) available in the
-  same build.
-- Figures drift between screens: every surface reads the same stored
-  records, and the assistant reads live queue state rather than a run
-  snapshot.
-
-## 10. Roadmap (labelled as roadmap, not product)
-- Model v2: payment-delay and validity models that take the customer's
-  actual workspace payment and deduction history as features, replacing
-  the disclosed synthetic-only basis.
-- Save & Retrieve by Session ID: named, restorable workspaces.
-- Two-way ERP connectors, bank-file formats (BAI2, MT940, lockbox),
-  and a formal correction-learning loop.
+## 1.6 Roadmap (labelled as roadmap, not product)
+* **Model v2:** payment-delay and deduction-validity features drawn from the workspace's own payment and deduction history, replacing the population-level customer component - deliberately sequenced after real history exists to learn from, so the validated metrics above are not traded for an unvalidated model.
+* **Save & Retrieve by Session ID:** named, restorable workspace sessions, so a reviewer can return to an exact workspace state by its session identifier.
+* **ERP write-back and bank formats:** posting the staged DZ documents into a customer's SAP rather than staging them, and native BAI2 / MT940 lockbox ingestion alongside CSV.
 
 Version 3.0 | 3 Nov 2026 | Owner: C. Harsha Vardhana Reddy
+
