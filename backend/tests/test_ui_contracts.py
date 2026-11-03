@@ -90,8 +90,8 @@ def test_navigation_is_the_fourteen_page_structure():
     import re
     html = client.get("/").text
     nav = re.findall(r'data-s="([a-z]+)"', html)
-    assert nav == ["dash", "cases", "upload", "run", "sap", "mail",
-                   "ledger", "forecast", "policy", "eval", "health",
+    assert nav == ["dash", "cases", "upload", "run", "sap", "ledger", "forecast", "mail",
+                   "policy", "eval", "health",
                    "method", "arch", "product"], nav
     for grp in ["OPERATE", "INSIGHT &amp; GOVERNANCE", "EVALS &amp; ARCHITECTURE"]:
         assert grp in html, grp
@@ -157,7 +157,7 @@ def test_v31_staged_lifecycle_contract():
     per-agent counts, Next Step footers, the live-proof mutation, the
     quota-safe AI framing, and v31 cache-bust stamps."""
     html = client.get("/").text
-    assert 'css/livecube.css?v=45' in html and 'js/state.js?v=45' in html
+    assert 'css/livecube.css?v=47' in html and 'js/state.js?v=47' in html
     # v32 declutter: no standalone Load demo case button anywhere, and the
     # author credit sits above the nav so it can never clip items 12-14
     assert '>Load demo case</button>' not in html

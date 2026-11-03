@@ -24,7 +24,7 @@ Navigate to `http://localhost:8080` to open the 14-page workspace.
 ## 5.2 Multi-Stage Docker Build
 The root `Dockerfile` performs a reproducible two-stage build:
 1. **Stage 1 (`rust:1.82-slim`):** Compiles `rust-kernel` in `--release` mode to produce the `autocash-kernel` binary.
-2. **Stage 2 (`python:3.12-slim`):** Installs pinned dependencies from `backend/requirements.txt`, copies the compiled `autocash-kernel` binary, `backend/app`, `frontend`, and `docs`, runs as a non-root user (`autocash`), and starts `uvicorn` on port `8080`.
+2. **Stage 2 (`python:3.12-slim`):** Installs pinned dependencies from `backend/requirements.txt`, copies the compiled `autocash-kernel` binary, `backend/app`, `frontend`, and `docs`, runs as a non-root user (`autocash`), and starts `uvicorn` on port `8080`. The image also carries `backend/tests` and the `tesseract-ocr` system package (required for image OCR), and its HEALTHCHECK probes `/ready` every 30 seconds.
 
 ```bash
 docker build -t autocash .
@@ -42,7 +42,12 @@ docker run -d -p 8080:8080 --name autocash autocash
 | `AUTOCASH_RATE_LIMIT_PER_MIN` | `300` | Per-API-key request ceiling, per minute. |
 | `AUTOCASH_BOOTSTRAP_KEY` | Unset (Open Demo Mode) | Optional master key to enforce API key authentication on administrative routes. |
 | `AUTOCASH_SMTP_HOST`, `AUTOCASH_SMTP_USER`, `AUTOCASH_SMTP_PASSWORD`, `AUTOCASH_MAIL_FROM` | Unset | Optional SMTP configuration for live email dispatch. Until set, sends record as `recorded_not_sent`. The password is automatically redacted in `/api/v1/diagnostics`. |
+| `AUTOCASH_SMTP_PORT` | `587` | SMTP port for live dispatch. |
+| `AUTOCASH_SMTP_TLS` | On | TLS for the SMTP connection; only `0` disables it. |
+| `GEMINI_TIMEOUT_S` | `40` | Per-call Gemini timeout in seconds, held safely below the platform ingress ceiling. |
+| `AUTOCASH_DOCS_DIR` | Unset | Overrides the directory served by `/api/v1/docs`. |
+| `PORT` | `8080` | The port the container binds; platforms that assign a port set this. |
 
 ---
 
-Version 3.0 | 3 Nov 2026 | Owner: C. Harsha Vardhana Reddy
+Version 3.1 | 3 Nov 2026 | Owner: C. Harsha Vardhana Reddy

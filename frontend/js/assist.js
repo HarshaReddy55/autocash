@@ -465,12 +465,18 @@ function chaseCard(f,i){
   <p><button class="btn small ghost" onclick="copyChase(${i})">Copy draft</button> <span id="chase-src-${i}"></span></p>
   <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input id="chase-to-${i}" placeholder="Payer AP email - e.g. ap@payer.com" style="flex:1;min-width:200px"><button class="btn small" onclick="sendChaseMail(${i},this)">Send chase</button><span id="chase-mail-${i}"></span></div></div>`;
 }
+async function fillChaseDraft(i){
+  const pid=CHASE[i]&&CHASE[i].payment_id;
+  try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"chase_email",tone:"strict",facts:CHASE[i]})});
+    if(!CHASE[i]||CHASE[i].payment_id!==pid) return;
+    const ta=$("chase-text-"+i); if(!ta) return;
+    ta.value=d.text;
+    const s=$("chase-src-"+i); if(s) s.innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
+  }catch(e){}
+}
 async function chaseDraft(i,btn){
   btn.disabled=true;
-  try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"chase_email",tone:"strict",facts:CHASE[i]})});
-    $("chase-text-"+i).value=d.text;
-    $("chase-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
-  }catch(e){toast(e.message)} finally{btn.disabled=false}
+  try{ await fillChaseDraft(i); if(!$("chase-text-"+i).value) toast("The draft could not be composed - try again"); } finally{btn.disabled=false}
 }
 function copyChase(i){ navigator.clipboard.writeText($("chase-text-"+i).value).then(()=>toast("Chase draft copied")) }
 async function renderDisputeDesk(matches, exceptions){
@@ -483,6 +489,8 @@ async function renderDisputeDesk(matches, exceptions){
   DESK=items.map(m=>{const d=m.result.deduction; return {payment_id:m.payment_id,payer:d.payer||"Buyer",claimed_cents:d.claimed_cents||0,reason_code:d.assigned_erp_reason_code,classification_label:(d.classification||{}).label||"deduction",win_probability:d.win_probability,expected_recovery_usd:d.expected_recovery_value_usd,tone:"strict"}});
   el.innerHTML=`<div class="panel"><h3>Dispute desk - deductions worth fighting <span data-info="dispute"></span></h3><div class="d">The Deduction Agent classified these claims and the expected-value rule opened disputes. The Briefing Agent drafts the claim and the replies - review the draft, add the buyer's AP email, and send it from here. Every send is recorded in the Outbox below with its true status.</div>${DESK.map((f,i)=>deskCard(f,i)).join("")}${CHASE.length?`<h3 style="margin-top:18px">Unmatched payments - chase the remittance</h3><div class="d">These payments matched nothing, so the cash sits unapplied. The platform does not guess: it asks the payer which invoices the money was for. Draft the chase email here and send it from here.</div>${CHASE.map((f,i)=>chaseCard(f,i)).join("")}`:""}<div id="outbox-strip"></div></div>`;
   loadOutbox();
+  DESK.forEach((f,i)=>fillDeskDraft(i));
+  CHASE.forEach((f,i)=>fillChaseDraft(i));
 }
 function splitSubject(text){
   const t=(text||"").trim();
@@ -511,13 +519,19 @@ async function loadOutbox(){
     el.innerHTML=`<h3 style="margin-top:18px">Outbox</h3><div class="d">${o.configured?pill("Mailbox configured - sends go out from "+esc(o.from),"ok"):pill("No mailbox configured - sends are recorded, not sent","warn")} Every send from this product is recorded here with its true status - a mail is only ever shown as sent when the mail server accepted it.</div>`+(o.mails.length?`<table><tr><th>When (UTC)</th><th>To</th><th>Subject</th><th>Kind</th><th>Status</th></tr>${o.mails.slice(0,10).map(m=>`<tr><td>${esc((m.created_at||"").slice(5,16).replace("T"," "))}</td><td>${esc(m.to)}</td><td>${esc(m.subject)}</td><td>${esc(m.kind)}</td><td>${pill(m.status==="sent"?"Sent":m.status==="failed"?"Failed":"Recorded - not sent", m.status==="sent"?"ok":m.status==="failed"?"bad":"warn")}</td></tr>`).join("")}</table>`:"<small>Nothing sent yet.</small>");
   }catch(e){}
 }
-function deskTone(i,t,btn){ DESK[i].tone=t; btn.parentElement.querySelectorAll("button[data-tone]").forEach(b=>b.classList.toggle("on",b===btn)); }
+function deskTone(i,t,btn){ DESK[i].tone=t; btn.parentElement.querySelectorAll("button[data-tone]").forEach(b=>b.classList.toggle("on",b===btn)); fillDeskDraft(i); }
+async function fillDeskDraft(i){
+  const pid=DESK[i]&&DESK[i].payment_id;
+  try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"dispute_email",tone:DESK[i].tone,facts:DESK[i]})});
+    if(!DESK[i]||DESK[i].payment_id!==pid) return;
+    const ta=$("desk-text-"+i); if(!ta) return;
+    ta.value=d.text;
+    const s=$("desk-src-"+i); if(s) s.innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
+  }catch(e){}
+}
 async function deskDraft(i,btn){
   btn.disabled=true;
-  try{ const d=await api("/api/v1/ai/draft",{method:"POST",body:JSON.stringify({kind:"dispute_email",tone:DESK[i].tone,facts:DESK[i]})});
-    $("desk-text-"+i).value=d.text;
-    $("desk-src-"+i).innerHTML=pill(d.source==="gemini"?"Written by Gemini":"Grounded template - "+aiWhy(d),"info");
-  }catch(e){toast(e.message)} finally{btn.disabled=false}
+  try{ await fillDeskDraft(i); if(!$("desk-text-"+i).value) toast("The draft could not be composed - try again"); } finally{btn.disabled=false}
 }
 async function deskRebuttal(i,kind,btn){
   const f=DESK[i]; const facts={...f,buyer_reply:kind,offer_usd:kind==="split"?Math.round(f.claimed_cents/2)/100:0};
@@ -587,7 +601,7 @@ function animateDashNums(){
 }
 setInterval(animateDashNums,700);
 
-const CMDK_VIEWS=[["dash","01","Dashboard"],["cases","02","Use Cases"],["upload","03","Upload Center"],["run","04","Run Reconciliation"],["sap","05","SAP BAPI & EBRR"],["mail","06","Outbound Mail Hub"],["ledger","07","Ledger"],["forecast","08","Forecast and Collections"],["policy","09","Policy Studio"],["eval","10","Evaluations"],["health","11","Agent Health"],["method","12","Methodology"],["arch","13","Architecture"],["product","14","Product Thinking"]];
+const CMDK_VIEWS=[["dash","01","Dashboard"],["cases","02","Use Cases"],["upload","03","Upload Center"],["run","04","Run Reconciliation"],["sap","05","SAP BAPI & EBRR"],["ledger","06","Ledger"],["forecast","07","Forecast and Collections"],["mail","08","Outbound Mail Hub"],["policy","09","Policy Studio"],["eval","10","Evaluations"],["health","11","Agent Health"],["method","12","Methodology"],["arch","13","Architecture"],["product","14","Product Thinking"]];
 let cmdkSel=0, cmdkItems=[];
 function cmdkAll(){
   const views=CMDK_VIEWS.map(v=>({grp:"Go to",num:v[1],label:v[2],run:()=>go(v[0])}));

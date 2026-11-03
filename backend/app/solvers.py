@@ -46,7 +46,7 @@ def _build_result(payment, candidates, lines, ded, residual, latency, matched_by
                "objective_terms": terms, "objective_total": round(sum(t["value"] for t in terms), 4),
                "confidence_derivation": {"base": round(conf_base, 4),
                    "base_rule": "1.0 when residual is 0, else max(0.3, 1 - |residual| / payment amount)",
-                   "reference_bonus": 0.0, "bonus_rule": "+0.03 only when the match came from an explicit reference or PO path",
+                   "reference_bonus": 0.03 if matched_by in ("reference", "po") else 0.0, "bonus_rule": "+0.03 only when the match came from an explicit reference or PO path",
                    "rung_cap": _RUNG_CAP.get(matched_by),
                    "cap_rule": "weak-evidence rungs (fuzzy payer, whole-ledger search) are capped below the auto-post bar"}}
     factors.update(extra or {})
