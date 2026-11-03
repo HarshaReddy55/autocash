@@ -83,6 +83,7 @@ function openChaseFor(pid){ HUB_CAT="chases"; go("mail"); toast("The remittance 
 async function runStagedNow(btn){ executeActiveCase(); }
 async function runWorkspaceBatch(btn){
   const __busy=btn?busyBtn(btn,"Solving MILP & matching payments..."):null;
+  const __stopLive=agentLiveTimed(0);
   try{
     const ws=await refreshWorkspace(); let pays=ws?ws.all_payments:[];
     // One workspace, one payment set: a run always reconciles everything
@@ -90,9 +91,10 @@ async function runWorkspaceBatch(btn){
     // becomes a one-payment run that overwrites the case's results.
     if(!pays.length){ toast("Nothing staged to run - load a case or upload payments first"); return }
     const b=await api("/api/v1/batches",{method:"POST",body:JSON.stringify({idempotency_key:"ui-case-"+Date.now(),payments:pays})});
+    __stopLive(); agentLiveStop();
     bumpGen(); lastRun=b; casePayments=pays; seedPayments=pays; renderRun(b);
     await refreshWorkspace(); renderGradeFromResults(b); refreshDash(); scheduleApprovalsJump(1200); toast("Run complete");
-  }catch(e){ toast("Run failed: "+e.message) }finally{ if(__busy)__busy() }
+  }catch(e){ __stopLive(); agentLiveStop(); toast("Run failed: "+e.message) }finally{ if(__busy)__busy() }
 }
 
 /* ---------- Dashboard + runs ---------- */
@@ -409,6 +411,53 @@ function renderRun(b){
 }
 const AGENT_SHORT={"Capture Agent":"Capture","Linking Agent":"Linking","Matching Agent":"Matching","Deduction Agent":"Deduction","Policy Agent":"Policy","Briefing Agent":"Briefing"};
 let PIPE_DATA=[];
+/* The agent team, shown while a run is executing. The strip is driven
+   by the run stream's own events (counts of resolved / solved /
+   decided wires are the stream's numbers, never invented); when the
+   run lands, renderAgentPipe replaces it with the permanent record
+   and its measured timings. The non-streaming path advances the
+   early stages on timers and holds on Matching, where the time
+   genuinely goes, until the response arrives. */
+const AGENT_LIVE=[["Capture","wires received"],["Linking","candidates narrowed"],["Matching","wires solved"],["Deduction","claims judged"],["Policy","decisions made"],["Briefing","drafts composed"]];
+let AGENT_LIVE_STATE=null;
+function agentStripHtml(stages,counts,note){
+  const cards=AGENT_LIVE.map((def,i)=>{ const s=stages[i];
+    const pl= s==="done"?pill("Completed","ok"): s==="running"?pill("Running","info"): s==="ondemand"?pill("On demand","info"): pill("Queued","grey");
+    const sub= s==="running"?"working...": s==="done"?"done": s==="ondemand"?"composes on demand":"waiting";
+    return `${i?'<div class="aarr">&#8594;</div>':""}<div class="anode live ${s}"><b>${def[0]}</b><span>${counts[i]||def[1]}</span><span>${sub}</span>${pl}</div>`; }).join("");
+  return `<div class="apipe">${cards}</div><small>${note}</small>`;
+}
+function renderAgentLive(){
+  const el=$("agent-pipe"); if(!el||!AGENT_LIVE_STATE) return;
+  const st=AGENT_LIVE_STATE;
+  const counts=["","","","","",""];
+  if(st.total){ counts[0]=`${st.total} wires in`; counts[2]=`${st.solved} of ${st.total} solved`; counts[4]=`${st.decided} of ${st.total} decided`; }
+  if(st.resolved) counts[1]=`${st.resolved} resolved`;
+  if(st.judged) counts[3]=`${st.judged} judged`;
+  el.innerHTML=agentStripHtml(st.stages,counts,"Live progress from the run itself - when the run lands, this strip becomes the run's permanent record with its measured timings.");
+}
+function agentLiveStart(total){
+  AGENT_LIVE_STATE={total:total||0,resolved:0,solved:0,judged:0,decided:0,stages:["running","queued","queued","queued","queued","queued"]};
+  renderAgentLive();
+}
+function agentLiveEvent(kind,n){
+  const st=AGENT_LIVE_STATE; if(!st) return;
+  if(kind==="batch_start"){ if(n&&!st.total) st.total=n; st.stages[0]="done"; st.stages[1]="running"; }
+  else if(kind==="resolved"){ st.resolved++; st.stages[1]="running"; st.stages[2]="running"; if(st.total&&st.resolved>=st.total) st.stages[1]="done"; }
+  else if(kind==="solved"){ st.solved++; if(st.total&&st.solved>=st.total) st.stages[2]="done"; if(st.stages[3]==="queued") st.stages[3]="running"; }
+  else if(kind==="deduction"){ st.judged++; }
+  else if(kind==="decision"){ st.decided++; if(st.judged<st.decided) st.judged=st.decided; st.stages[4]="running"; if(st.total&&st.decided>=st.total){ st.stages[3]="done"; st.stages[4]="done"; st.stages[5]="running"; } }
+  else if(kind==="batch_done"){ st.stages=["done","done","done","done","done","running"]; }
+  renderAgentLive();
+}
+function agentLiveStop(){ AGENT_LIVE_STATE=null; }
+function agentLiveTimed(total){
+  agentLiveStart(0);
+  const st=AGENT_LIVE_STATE; if(!st) return ()=>{};
+  const t1=setTimeout(()=>{ if(AGENT_LIVE_STATE===st){ st.stages[0]="done"; st.stages[1]="running"; renderAgentLive(); } },450);
+  const t2=setTimeout(()=>{ if(AGENT_LIVE_STATE===st){ st.stages[1]="done"; st.stages[2]="running"; renderAgentLive(); } },1050);
+  return ()=>{ clearTimeout(t1); clearTimeout(t2); };
+}
 function orderRunPanels(executed){
   const ap=$("agent-panel"), sp=$("staged-panel"), gr=$("results-grid");
   if(!ap||!sp||!gr) return;
@@ -417,7 +466,7 @@ function orderRunPanels(executed){
 }
 async function renderAgentPipe(runId){
   const el=$("agent-pipe"); if(!el) return;
-  if(!runId){ el.innerHTML="<small>Run a batch and the six agents appear here with their measured timings. Click any agent to inspect the payload it handed to the next.</small>"; const ai=$("agent-inspect"); if(ai)ai.innerHTML=""; return }
+  if(!runId){ el.innerHTML=agentStripHtml(["queued","queued","queued","queued","queued","ondemand"],["","","","","",""],"The agent team on this run: five agents work in sequence and Briefing composes on demand. Run the case and this strip lights up live, then becomes the run's permanent record with measured timings - click any agent to inspect what it handed on."); const ai=$("agent-inspect"); if(ai)ai.innerHTML=""; return }
   try{ const d=await api(`/api/v1/runs/${runId}/agents`); PIPE_DATA=d.agents||[];
     if(!PIPE_DATA.length){ el.innerHTML="<small>This run predates agent pipeline recording. Run the batch again and each agent's timing and payload will be inspectable here.</small>"; return }
     const cnt=a=>{ const e=a.evidence||{}; if(a.agent==="Capture Agent") return `${e.payments_received??"-"} wires in`; if(a.agent==="Linking Agent") return `${e.candidates_total??"-"} candidates`; if(a.agent==="Matching Agent") return `${e.payments_solved??"-"} wires solved`; if(a.agent==="Deduction Agent") return `${e.claims_judged??"-"} claims judged`; if(a.agent==="Policy Agent") return `${e.auto_posted??"-"} auto-posted, ${(e.held_for_approval??e.proposed_for_review??"-")} held`; if(a.agent==="Briefing Agent") return `${e.settlement_drafts_recorded??"-"} drafts composed`; return "" };
@@ -428,6 +477,7 @@ async function renderAgentPipe(runId){
 function inspectAgent(i){
   const a=PIPE_DATA[i]; if(!a) return;
   $("agent-inspect").innerHTML=`<div class="detail"><b>${esc(a.agent)}</b> - status ${esc(a.status)}, measured time ${a.latency_ms} ms on this run. <b>The payload it handed to the next agent:</b><pre class="jsonbox">${esc(JSON.stringify(a.evidence,null,2))}</pre></div>`;
+  document.querySelectorAll("#agent-pipe .anode").forEach((n,j)=>n.classList.toggle("active",j===i));
   $("agent-inspect").scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 /* v23 tour, Step 2: the flagship evidence opens itself. The hero match
@@ -480,7 +530,7 @@ function autoInspectMatching(){
   const i=PIPE_DATA.findIndex(a=>a.agent==="Matching Agent"); if(i<0) return;
   const a=PIPE_DATA[i];
   ai.innerHTML=`<div class="detail"><b>${esc(a.agent)}</b> - status ${esc(a.status)}, measured time ${a.latency_ms} ms on this run. <b>The payload it handed to the next agent:</b><pre class="jsonbox">${esc(JSON.stringify(a.evidence,null,2))}</pre></div>`;
-  const nodes=document.querySelectorAll("#agent-pipe .anode"); if(nodes[i]) nodes[i].classList.add("active");
+  document.querySelectorAll("#agent-pipe .anode").forEach((n,j)=>n.classList.toggle("active",j===i));
 }
 let CUR_RESID=0, CUR_PAY=null;
 function detailExtras(r,pay){

@@ -217,6 +217,7 @@ async function runLive(btn){
   // the case's full batch (the backend's workspace fallback), so the
   // live lanes are never a dead end on an already-run case.
   out.innerHTML=`<div class="grid2" style="align-items:start"><div id="live-lanes"></div><div id="live-log"></div></div><div id="live-summary" style="margin-top:10px"></div>`;
+  agentLiveStart((WS.staged_payments||[]).length);
   const lanes=$("live-lanes"), log=$("live-log"), lanesById={};
   const t0=performance.now();
   const stamp=()=>(((performance.now()-t0)/1000).toFixed(2)+"s").padStart(6," ");
@@ -233,22 +234,23 @@ async function runLive(btn){
         const raw=buf.slice(0,idx); buf=buf.slice(idx+2);
         if(!raw.startsWith("data: ")) continue;
         const e=JSON.parse(raw.slice(6));
-        if(e.type==="batch_start"){logLine(`<span class="hl">BATCH</span> ${e.run_id} - ${e.payments} payments`)}
+        if(e.type==="batch_start"){agentLiveEvent("batch_start",e.payments); logLine(`<span class="hl">BATCH</span> ${e.run_id} - ${e.payments} payments`)}
         else if(e.type==="payment_start"){
           const lane=document.createElement("div"); lane.className="lane";
           lane.innerHTML=`<div class="who"><b>${esc(e.payment_id)}</b> - ${esc(e.payer)}<small>${money(e.amount_cents)}</small></div><div class="stages"><span class="chip">1 RESOLVE</span><span class="chip">2 SOLVE</span><span class="chip">3 DEDUCTION</span><span class="chip">4 DECISION</span></div>`;
           lanes.appendChild(lane); lanesById[e.payment_id]=lane;
           logLine(`${e.payment_id} received - ${money(e.amount_cents)} from ${esc(e.payer)}`);
         }
-        else if(e.type==="resolved"){chip(lanesById[e.payment_id],0,"done",`1 RESOLVED - ${esc(e.matched_by)} - ${e.candidates} candidate${e.candidates==1?"":"s"}`); logLine(`${e.payment_id} Linking Agent narrowed candidates by <span class="hl">${esc(e.matched_by)}</span> to ${e.candidates}`)}
-        else if(e.type==="solved"){const L=lanesById[e.payment_id]; chip(L,1,e.status==="OPTIMAL_EXACT_MATCH"?"done":"on",`2 SOLVED - ${esc(e.status)} - ${e.latency_ms} ms`); if(!e.invoices.length) chip(L,2,"","3 NO DEDUCTION"); logLine(`${e.payment_id} Matching Agent: ${esc(e.status)}, residual ${money(e.residual_cents)}, confidence ${Number(e.confidence).toFixed(2)}, ${e.latency_ms} ms`)}
-        else if(e.type==="deduction"){chip(lanesById[e.payment_id],2,"on",`3 DEDUCTION - ${esc(e.decision||"judged")} ${esc(e.reason_code||"")}`); logLine(`${e.payment_id} Deduction Agent judged: <span class="hl">${esc(e.decision||"")}</span> (${esc(e.reason_code||"")}), z ${e.z_score}, expected recovery $${e.expected_recovery}`)}
-        else if(e.type==="decision"){const L=lanesById[e.payment_id]; if(L){const c3=L.querySelectorAll(".chip")[2]; if(c3&&c3.textContent.includes("DEDUCTION")&&!c3.className.includes("on")&&!c3.className.includes("done")) c3.innerHTML="3 NO CLAIM"; chip(L,3,e.decision==="AUTO_POSTED"?"done":(e.decision==="EXCEPTION"?"bad":"on"),`4 ${esc(e.decision)}`)} logLine(`${e.payment_id} Policy Agent decision: <span class="${e.decision==="AUTO_POSTED"?"ok":(e.decision==="EXCEPTION"?"bad":"hl")}">${esc(e.decision)}</span> - ${esc(e.reason)}`)}
-        else if(e.type==="batch_done"){$("live-summary").innerHTML=`<div class="verdict pass">Run ${e.run_id} complete: ${e.auto_posted} of ${e.payments} auto-posted, touchless ${Math.round(100*e.auto_posted/Math.max(e.payments,1))}% - total engine time ${e.ms} ms. Stored - see it in Dashboard run history.</div>`; logLine(`<span class="ok">DONE</span> ${e.run_id} in ${e.ms} ms`)}
+        else if(e.type==="resolved"){agentLiveEvent("resolved"); chip(lanesById[e.payment_id],0,"done",`1 RESOLVED - ${esc(e.matched_by)} - ${e.candidates} candidate${e.candidates==1?"":"s"}`); logLine(`${e.payment_id} Linking Agent narrowed candidates by <span class="hl">${esc(e.matched_by)}</span> to ${e.candidates}`)}
+        else if(e.type==="solved"){agentLiveEvent("solved"); const L=lanesById[e.payment_id]; chip(L,1,e.status==="OPTIMAL_EXACT_MATCH"?"done":"on",`2 SOLVED - ${esc(e.status)} - ${e.latency_ms} ms`); if(!e.invoices.length) chip(L,2,"","3 NO DEDUCTION"); logLine(`${e.payment_id} Matching Agent: ${esc(e.status)}, residual ${money(e.residual_cents)}, confidence ${Number(e.confidence).toFixed(2)}, ${e.latency_ms} ms`)}
+        else if(e.type==="deduction"){agentLiveEvent("deduction"); chip(lanesById[e.payment_id],2,"on",`3 DEDUCTION - ${esc(e.decision||"judged")} ${esc(e.reason_code||"")}`); logLine(`${e.payment_id} Deduction Agent judged: <span class="hl">${esc(e.decision||"")}</span> (${esc(e.reason_code||"")}), z ${e.z_score}, expected recovery $${e.expected_recovery}`)}
+        else if(e.type==="decision"){agentLiveEvent("decision"); const L=lanesById[e.payment_id]; if(L){const c3=L.querySelectorAll(".chip")[2]; if(c3&&c3.textContent.includes("DEDUCTION")&&!c3.className.includes("on")&&!c3.className.includes("done")) c3.innerHTML="3 NO CLAIM"; chip(L,3,e.decision==="AUTO_POSTED"?"done":(e.decision==="EXCEPTION"?"bad":"on"),`4 ${esc(e.decision)}`)} logLine(`${e.payment_id} Policy Agent decision: <span class="${e.decision==="AUTO_POSTED"?"ok":(e.decision==="EXCEPTION"?"bad":"hl")}">${esc(e.decision)}</span> - ${esc(e.reason)}`)}
+        else if(e.type==="batch_done"){agentLiveEvent("batch_done"); $("live-summary").innerHTML=`<div class="verdict pass">Run ${e.run_id} complete: ${e.auto_posted} of ${e.payments} auto-posted, touchless ${Math.round(100*e.auto_posted/Math.max(e.payments,1))}% - total engine time ${e.ms} ms. Stored - see it in Dashboard run history.</div>`; logLine(`<span class="ok">DONE</span> ${e.run_id} in ${e.ms} ms`)}
         else if(e.type==="error"){logLine(`<span class="bad">ERROR</span> ${esc(e.message)}`)}
       }
     }
-  }catch(err){out.innerHTML=`<div class="verdict fail">Live stream failed: ${esc(err.message)}. The stored-run path still works - use Run without streaming.</div>`}
+  }catch(err){agentLiveStop(); out.innerHTML=`<div class="verdict fail">Live stream failed: ${esc(err.message)}. The stored-run path still works - use Run without streaming.</div>`}
+  agentLiveStop();
   clearTimeout(__t1); __busy();
   try{
     const ws2=await refreshWorkspace();

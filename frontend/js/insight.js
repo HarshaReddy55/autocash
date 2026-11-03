@@ -204,7 +204,7 @@ async function loadDiag(){
 async function loadTenants(){
   const sel=$("tenant-switch"); if(!sel) return;
   try{ const d=await api("/api/v1/tenants/demo");
-    const chip=$("session-chip"); if(chip) chip.textContent="SESSION "+(d.session||sessionId().slice(0,8)).toUpperCase();
+    const chip=$("session-chip"); if(chip) chip.textContent="SESSION "+(d.session||sessionId()).slice(0,8).toUpperCase();
     sel.innerHTML=d.tenants.map(t=>`<option value="${t.id}" ${t.id===d.active?"selected":""}>${esc(t.name)} - ${esc(t.erp)}</option>`).join("");
     sel.disabled=!d.switching_enabled;
     if(!d.switching_enabled) sel.title="Tenant switching is off when API keys are issued - the key decides the tenant";
