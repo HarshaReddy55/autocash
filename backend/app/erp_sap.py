@@ -61,7 +61,13 @@ def build_posting_document(match_result, payment, document_number=None, customer
     if payment_cents is None:
         payment_cents = sum(l.get("net_cents", 0) for l in lines)
     deduction_applied = eq.get("deduction_applied_cents") or 0
-    residual = match_result.get("residual_cents") or 0
+    # The stored match record carries the residual inside its derivation
+    # equation, not as a top-level field; reading only the top level made
+    # every partial or overpaid document come out unbalanced (found by
+    # the v40 live audit). Same fallback as the decision handler.
+    residual = match_result.get("residual_cents")
+    if residual is None:
+        residual = eq.get("residual_cents") or 0
 
     journal = [_line("cash", debit_cents=payment_cents)]
     if discounts:

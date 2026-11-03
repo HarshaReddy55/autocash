@@ -242,9 +242,27 @@ total, with the remaining balance as the amount owed.
 The session restore findings in that report I left alone on
 purpose. Session handling is a feature on my own roadmap, to be
 built deliberately, not a defect to patch under audit pressure.
-The suite stands at 133 tests.
+The suite stands at 134 tests.
 
 ## Closing note
+## 14. The live audit found the third reader
+
+Entry 12 recorded a fix that read a field the stored record does not
+carry. It turns out the same phantom field had a third reader, in the
+SAP document builder, and only a live audit caught it: after v40
+deployed, approving the partial payment produced a clearing document
+that did not balance (Dr cash 20,000 against Cr receivables 36,750,
+no residual line), because the builder read the residual from the top
+level of the match record instead of from its derivation equation.
+Exact matches had concealed it completely: their residual is zero on
+either reading, so ten of the eleven documents balanced and only the
+partial one exposed it. The builder now reads the equation like the
+other two readers, and the regression test approves a partial payment
+and an overpayment and asserts both documents balance, line by line.
+My earlier verification had checked the browser's preview builder,
+which was correct, and called the document done. Verify through the
+surface that ships.
+
 None of these problems were exotic. They are the ordinary failures of
 real software: a tolerance, a cache, a missing tag, a setting that was
 never applied, a budget that was not there. What I am proud of is not

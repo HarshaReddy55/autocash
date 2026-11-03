@@ -262,7 +262,7 @@ page session and guarded by sequence counters, so a slow response can
 never overwrite a newer screen.
 
 ## 13. Build and release
-The test suite (133 automated tests, plus the Rust kernel tests) gates
+The test suite (134 automated tests, plus the Rust kernel tests) gates
 the container build in continuous integration: a failing suite means no
 image. The image is built from the repository's Dockerfile in two stages
 (Rust kernel first, then the Python application with the kernel binary

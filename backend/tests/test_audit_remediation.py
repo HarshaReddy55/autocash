@@ -352,3 +352,31 @@ def test_no_string_interpolation_into_inline_handlers():
             if "onclick=" in line and "'${" in line:
                 bad.append(f"{f.name}:{n}")
     assert not bad, bad
+
+
+# -- Round 4 (found by the v40 LIVE audit, not the report): the SAP
+# document builder read the residual from a top-level field the stored
+# match record does not carry, so a partial payment's clearing document
+# came out unbalanced (Dr cash $20,000 against Cr AR $36,750, no
+# residual line), and an overpayment's document missed its on-account
+# credit. Exact matches hid it completely: their residual is genuinely
+# zero either way, which is why 10 of 11 documents balanced.
+
+def test_posting_documents_balance_for_partial_and_overpayment():
+    _seed_and_run()
+    appr = client.get("/api/v1/approvals").json()
+    for pid in ("P4", "P14"):
+        mid = next(a["match_id"] for a in appr if a["payment_id"] == pid)
+        assert client.post(f"/api/v1/matches/{mid}/decision",
+                           json={"decision": "approve"}).status_code == 200
+    erp = client.get("/api/v1/erp/run-documents").json()
+    assert erp["totals"]["balanced"] is True
+    docs = {d["payment_id"]: d["document"] for d in erp["documents"]}
+    p4 = docs["P4"]
+    assert p4["balanced"] is True
+    gl4 = {l["gl_account"]: l for l in p4["journal"]}
+    assert gl4["121600"]["debit_cents"] == 1675000   # residual receivable
+    p14 = docs["P14"]
+    assert p14["balanced"] is True
+    gl14 = {l["gl_account"]: l for l in p14["journal"]}
+    assert gl14["121900"]["credit_cents"] == 52000   # on-account credit $520

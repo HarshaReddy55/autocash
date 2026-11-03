@@ -60,7 +60,7 @@ contract. No incumbent offers that evaluation openly.
   greedy baseline's 80 percent on labelled scenarios; model metrics
   with their data basis stated (delay MAE 2.95 days against a 7.67-day
   baseline; validity AUC 0.846).
-- 133 automated tests gating every build, the Rust kernel's 203-case
+- 134 automated tests gating every build, the Rust kernel's 203-case
   equivalence suite, and this document pack: PRD, research,
   architecture, implementation, deployment and the builder's
   challenges account.

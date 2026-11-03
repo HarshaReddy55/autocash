@@ -10,7 +10,7 @@ One container image, built from the repository Dockerfile in two
 stages: the Rust kernel is compiled first, then placed into the Python
 application image together with the Tesseract OCR engine. The image
 serves the API and the frontend from one process on port 8080. The
-full automated test suite (133 tests, plus the Rust kernel tests) runs
+full automated test suite (134 tests, plus the Rust kernel tests) runs
 in continuous integration and gates the image build: a failing suite
 means no image is produced.
 

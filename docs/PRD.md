@@ -129,7 +129,7 @@ may be quoted until a pilot produces one.
   zero-touch postings plus solved-and-held matches plus reasoned
   refusals, over all 16 payments. The definition is printed in the
   product next to the figure.
-- Test suite: 133 automated tests plus the Rust kernel tests, all
+- Test suite: 134 automated tests plus the Rust kernel tests, all
   passing, and the suite gates every production build.
 
 North star for the product: the touchless cash rate at zero residual.

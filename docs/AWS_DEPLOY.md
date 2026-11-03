@@ -40,7 +40,7 @@ secret:
 
 ## Step 5 - Push and watch the build
 Push to main from GitHub Desktop. In the repository's Actions tab, the
-workflow runs the full test suite first (133 tests plus the Rust
+workflow runs the full test suite first (134 tests plus the Rust
 kernel tests); only a green suite builds and pushes the autocash:latest
 image to ECR. The first build takes roughly ten minutes (the Rust
 stage). Confirm the image: ECR, autocash, Images shows "latest".
