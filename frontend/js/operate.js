@@ -110,8 +110,9 @@ async function refreshDash(){
     $("k-ai").textContent=aiModeLabel(h.gemini_configured,h.gemini_last_error);
     fillInfo();
     renderImpact();
-    if(runs.length){
-      const m=await api(`/api/v1/runs/${runs[0].run_id}/matches`);
+    const R0=runs.find(r=>!r.status||r.status==="COMPLETED");
+    if(R0){
+      const m=await api(`/api/v1/runs/${R0.run_id}/matches`);
       if(g!==WS_GEN) return;
       const susp=m.reduce((a,x)=>a+Math.abs(x.residual_cents),0);
       const lats=m.map(x=>(x.result||{}).latency_ms||0).filter(Boolean);
@@ -121,8 +122,8 @@ async function refreshDash(){
       // zero-touch rate stays printed underneath as one tier of it,
       // never hidden and never inflated: a held exact match is solved,
       // a refused wire is not, and both say so.
-      if(runs[0].payments){
-        const tot=runs[0].payments, dec=m.length;
+      if(R0.payments){
+        const tot=R0.payments, dec=m.length;
         const autoN=m.filter(x=>x.status==="AUTO_POSTED").length;
         const qSol=m.filter(x=>x.status==="PROPOSED"&&((x.result||{}).lines||[]).length).length;
         const qRef=dec-autoN-qSol;
@@ -137,7 +138,7 @@ async function refreshDash(){
       $("r-susp").innerHTML=money(susp);
       $("r-lat").innerHTML=lats.length?(lats.reduce((a,b)=>a+b,0)/lats.length).toFixed(1)+" <small>ms</small>":"-";
       $("r-settled").innerHTML=m.reduce((a,x)=>a+((x.result||{}).lines||[]).length,0);
-      $("r-exc").innerHTML=runs[0].exceptions;
+      $("r-exc").innerHTML=R0.exceptions;
     } else if(!(WS&&WS.latest_run)) {
       // A stale no-runs snapshot (e.g. the page's first dashboard load,
       // still in flight while the first-visit bootstrap runs a batch)
@@ -145,7 +146,7 @@ async function refreshDash(){
       $("r-stp").innerHTML="-"; $("r-susp").innerHTML="-"; $("r-lat").innerHTML="-";
       $("r-settled").innerHTML="-"; $("r-exc").innerHTML="-";
     }
-    if(runs.length){const t=runs[0].payments?runs[0].auto_posted/runs[0].payments:0;$("k-touch").textContent=(t*100).toFixed(1)+"%"}
+    if(R0){const t=R0.payments?R0.auto_posted/R0.payments:0;$("k-touch").textContent=(t*100).toFixed(1)+"%"}
     else{$("k-touch").textContent="-"}
     if(WS&&WS.run_status==="staged"){
       // v32: the readiness panel lives ONCE, in the Case Brief above.
@@ -210,6 +211,7 @@ sap:["SAP S/4HANA BAPI & EBRR","The posting document the ERP receives for a clea
 solver:["Solver Engine - HiGHS MILP + Rust kernel","Exact subset selection under the cash conservation equation. The MILP proves the chosen invoice set is the cheapest complete explanation of the wire; a Rust subset-sum kernel inside the solve path decides a payment only when its exact set is provably unique (at most 18 candidates) and is equivalence-tested against the Python path on 203 shared cases; every set the MILP returns is re-verified in exact integer cents before it is believed.","minimise unexplained cents x 1,000,000 + set penalties, subject to sum(gross) - discounts - deduction - payment = residual; residual must be exactly 0 to auto-post, with confidence at the policy threshold and no maker-checker hold","A 37-cent near-miss on a seven-figure wire is rejected and re-verified in integer cents - never posted as exact. Click the card for the live kernel health."],
 apprv:["Approvals waiting","Matches the solver solved exactly but policy held for a second person - most often the maker-checker rule above the amount threshold, or a partial that needs a human eye.","count of PROPOSED matches in the active workspace, read live from the approvals queue","This is automation with a seatbelt: the bigger the money, the more valuable the hold. The queue itself lives on the Run page."]};
 const INFO={
+  savesess:["Save & retrieve by session ID","A snapshot of the whole workspace database - case, runs, decisions, approvals, outbox and audit trail - stored on the server under a short session ID. Entering the ID on the Dashboard replaces the current workspace with that snapshot, byte for byte, so a reviewer can return to the exact state a session was saved in.","snapshot = a SQLite VACUUM INTO copy of the session database; restore = the snapshot file swapped back in as the workspace database","Named, restorable sessions: work can be handed over, reviewed later, or resumed after an interruption - by ID, not by re-uploading files. Snapshots live for the life of the deployment; a redeploy clears them, and the panel says so."],
   stp:["Autonomous resolution rate","Of all payments in the latest run, the share the agent brought to a decision entirely on its own: posted, solved exactly and queued for a person's signature, or refused with a stated reason. Only wires stopped before matching (the duplicate guard) sit outside it.","decided wires / all wires in the run; the tiers underneath split decided into zero-touch posted, solved and queued, and refused with a reason","The JD's 90%+ automation question, answered the enterprise way: the algorithm decides, governance only signs. The zero-touch rate is one tier of this number, printed underneath it - not hidden, not inflated."],
   susp:["Unapplied cash in suspense","Money from the latest run that the agent could not fully explain - the total of all leftover amounts (residuals) across its matches.","SUM |residual_cents| over the run's stored matches","Money that arrived but is not yet applied to any invoice blocks the month-end close and confuses customers. This is usually the first figure a CFO asks for."],
   lat:["Average solver latency","How long the solver took per payment in the latest run, on average. The time is stored on each match when it is made.","mean(latency_ms) over matches","A batch can hold thousands of payments, so each one must solve in milliseconds. Narrowing the candidate list first is what keeps it fast."],
@@ -398,6 +400,7 @@ async function openSapShowcase(){
 /* ---------- Seed + batch ---------- */
 async function seedAndRun(btn){ await loadCaseAndRun("seed",btn) }
 function renderRun(b){
+  BRIEF_RUN=null; BRIEF_PROMISE=null; // a finished run invalidates any brief computed while it executed
   RUN_FILTER=null;
   $("run-summary").innerHTML=`<div class="msg">Run <b>${esc(b.run_id)}</b> - ${b.payments} payments, <b>${b.auto_posted} auto-posted</b>, touchless ${(b.touchless_rate*100).toFixed(1)}%. Select a match for lines and counterfactuals.</div>`;
   $("matches").innerHTML=`<table><tr><th>Payment <span data-info="payid"></span></th><th>Status <span data-info="matchstatus"></span></th><th>Matched by <span data-info="rung"></span></th><th>Matched invoices <span data-info="lines"></span></th><th>Allocated cash <span data-info="netapp"></span></th><th>Residual <span data-info="resid"></span></th><th>Conf. <span data-info="conf"></span></th></tr>${b.results.map((r,i)=>`<tr class="clickable" onclick="liveDetail(${i})"><td>${esc(r.payment_id)}</td><td>${statusPill(r.status)}</td><td>${pill(esc(r.matched_by||"-"),"info")}</td><td>${r.lines.map(l=>esc(l.invoice_id)).join(", ")||"-"}</td><td>${money(r.lines.reduce((a,l)=>a+l.net_cents,0))}</td><td>${money(r.residual_cents)}</td><td><div class="confbar"><i style="width:${Math.round(r.confidence*100)}%"></i></div><small>${Number(r.confidence).toFixed(2)}</small></td></tr>`).join("")}</table>`;

@@ -1587,6 +1587,107 @@ def evaluations():
 
 
 
+
+# ---- Session save & retrieve -------------------------------------------
+# A workspace session can be snapshotted under a short session ID and
+# restored later, byte for byte, by entering that ID. Snapshots are
+# SQLite VACUUM INTO copies of the session's database file, kept in
+# <data_dir>/saved_sessions/ for the life of the deployment (the data
+# dir is ephemeral by design, and the UI says so).
+import sqlite3 as _sqlite3, shutil as _shutil, secrets as _secrets
+
+_SAVE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+def _saved_dir():
+    d = os.path.join(store.base_dir, "saved_sessions")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+def _save_key(raw):
+    s = _re.sub(r"[^A-Za-z0-9]", "", raw or "").upper()
+    if s.startswith("AC"): s = s[2:]
+    return s
+
+def _manifest():
+    p = os.path.join(_saved_dir(), "index.json")
+    try:
+        with open(p) as f: return json.load(f)
+    except Exception:
+        return {}
+
+def _manifest_put(key, meta):
+    m = _manifest(); m[key] = meta
+    p = os.path.join(_saved_dir(), "index.json")
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f: json.dump(m, f)
+    os.replace(tmp, p)
+
+def _db_counts(path):
+    out = {}
+    con = _sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        for t in ("invoices", "payments", "runs", "matches"):
+            try: out[t] = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+            except Exception: out[t] = 0
+    finally:
+        con.close()
+    return out
+
+@app.post("/api/v1/session/save")
+def session_save(body: dict = None, ctx=Depends(auth_context)):
+    need(ctx, "run")
+    repo = repo_for(ctx["tenant_id"])
+    while True:
+        body10 = "".join(_secrets.choice(_SAVE_ALPHABET) for _ in range(10))
+        save_id = f"AC-{body10[:5]}-{body10[5:]}"
+        dest = os.path.join(_saved_dir(), body10 + ".db")
+        if not os.path.exists(dest): break
+    repo.audit(f"api:{ctx['role']}", "session_saved", "session", save_id,
+               {"tenant": ctx["base_tenant"]}, _now_iso())
+    con = _sqlite3.connect(repo.path)
+    try:
+        con.execute("VACUUM INTO ?", (dest,))
+    finally:
+        con.close()
+    meta = {"save_id": save_id, "saved_at": _now_iso(), "tenant": ctx["base_tenant"],
+            "label": ((body or {}).get("label") or "").strip()[:80],
+            "counts": _db_counts(dest)}
+    _manifest_put(body10, meta)
+    return {"save_id": save_id, "saved_at": meta["saved_at"], "counts": meta["counts"],
+            "storage": "Snapshots live on this server for the life of the deployment; a redeploy clears them."}
+
+@app.get("/api/v1/session/saves")
+def session_saves(ctx=Depends(auth_context)):
+    need(ctx, "read")
+    saves = sorted(_manifest().values(), key=lambda m: m.get("saved_at", ""), reverse=True)
+    return {"saves": saves}
+
+@app.post("/api/v1/session/restore")
+def session_restore(body: dict, ctx=Depends(auth_context)):
+    need(ctx, "run")
+    key = _save_key((body or {}).get("save_id") or (body or {}).get("session_id") or "")
+    src = os.path.join(_saved_dir(), key + ".db")
+    if len(key) != 10 or not os.path.exists(src):
+        raise HTTPException(404, "No saved session with that ID. Check the ID and try again - IDs look like AC-7K2QX-9M4TD.")
+    repo = repo_for(ctx["tenant_id"])
+    target = repo.path
+    if os.path.abspath(src) == os.path.abspath(target):
+        raise HTTPException(409, "That snapshot is this workspace's own file; nothing to restore.")
+    tmp = target + ".restore-tmp"
+    _shutil.copyfile(src, tmp)
+    with _repos_lock:
+        _repos.pop(ctx["tenant_id"], None)
+    for suffix in ("-wal", "-shm"):
+        try: os.remove(target + suffix)
+        except OSError: pass
+    os.replace(tmp, target)
+    meta = _manifest().get(key, {})
+    fresh = repo_for(ctx["tenant_id"])
+    fresh.audit(f"api:{ctx['role']}", "session_restored", "session", meta.get("save_id", key),
+                {"saved_at": meta.get("saved_at")}, _now_iso())
+    return {"restored": True, "save_id": meta.get("save_id", key),
+            "saved_at": meta.get("saved_at"), "counts": _db_counts(target)}
+
 # ---- Admin / tenancy ----
 class TenantIn(BaseModel):
     name: str

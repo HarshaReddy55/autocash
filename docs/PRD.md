@@ -81,7 +81,7 @@ To give operators and auditors complete visibility into what came in versus what
 
 ## 1.6 Roadmap (labelled as roadmap, not product)
 * **Model v2:** payment-delay and deduction-validity features drawn from the workspace's own payment and deduction history, replacing the population-level customer component - deliberately sequenced after real history exists to learn from, so the validated metrics above are not traded for an unvalidated model.
-* **Save & Retrieve by Session ID:** named, restorable workspace sessions, so a reviewer can return to an exact workspace state by its session identifier.
+* **Save & Retrieve by Session ID - SHIPPED (v54, Nov 2026):** the workspace can be snapshotted under a short session ID (a consistent SQLite copy of the session database, stored server-side for the life of the deployment) and restored byte for byte by entering the ID on the Dashboard. Remaining gap: snapshots do not survive a redeploy - durable cross-deployment storage is the open item under Persistent Storage.
 * **ERP write-back and bank formats:** posting the staged DZ documents into a customer's SAP rather than staging them, and native BAI2 / MT940 lockbox ingestion alongside CSV.
 
 Version 3.1 | 3 Nov 2026 | Owner: C. Harsha Vardhana Reddy

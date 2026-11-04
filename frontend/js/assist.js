@@ -196,7 +196,7 @@ async function cbRun(btn){
     toast("Custom case loaded into the workspace"); setTimeout(()=>go("run"),650);
   }catch(e){toast("Case failed: "+e.message)}finally{btn.disabled=false}
 }
-const LOADERS={dash:async()=>{await Promise.all([refreshDash(),loadScore()]);loadAiStrip()},
+const LOADERS={dash:async()=>{await Promise.all([refreshDash(),loadScore()]);loadAiStrip();loadSaves()},
 cases:async()=>{await loadCases()},
 upload:async()=>{wireAutoParse()},
 run:async()=>{await refreshWorkspace();if(WS&&WS.latest_run){const rid=WS.latest_run.run_id;const [m,x]=await Promise.all([api(`/api/v1/runs/${rid}/matches`),api(`/api/v1/runs/${rid}/exceptions`)]);renderStoredRun(rid,m,x); if(window.orderRunPanels) orderRunPanels(true)}else { if(window.renderAgentPipe) renderAgentPipe(null); if(window.orderRunPanels) orderRunPanels(false); }await renderGradeFromStored();await loadGov();await loadApprovals()},
@@ -252,6 +252,7 @@ async function runLive(btn){
   }catch(err){agentLiveStop(); out.innerHTML=`<div class="verdict fail">Live stream failed: ${esc(err.message)}. The stored-run path still works - use Run without streaming.</div>`}
   agentLiveStop();
   clearTimeout(__t1); __busy();
+  BRIEF_RUN=null; BRIEF_PROMISE=null; // the streamed run just landed - no brief computed mid-stream may survive it
   try{
     const ws2=await refreshWorkspace();
     if(ws2&&ws2.latest_run){
@@ -261,6 +262,40 @@ async function runLive(btn){
     refreshDash();
   }catch(e){}
   scheduleApprovalsJump(1000);
+}
+/* ---------- Session save & retrieve ---------- */
+async function saveSession(btn){
+  const __busy=btn?busyBtn(btn,"Saving session..."):null;
+  try{
+    const r=await api("/api/v1/session/save",{method:"POST",body:JSON.stringify({})});
+    const out=$("save-out");
+    if(out) out.innerHTML=`<div class="msg">Session saved. Your session ID is <b class="mono" style="font-size:15px">${esc(r.save_id)}</b> - enter it in the box above on any visit to restore this exact state (${r.counts.invoices} invoices, ${r.counts.payments} payments, ${r.counts.runs} runs, ${r.counts.matches} matches).</div>`;
+    const inp=$("session-id-in"); if(inp) inp.value=r.save_id;
+    toast("Session saved - ID "+r.save_id);
+    loadSaves();
+  }catch(e){ toast("Save failed: "+e.message) }finally{ if(__busy)__busy() }
+}
+async function restoreSession(btn,presetId){
+  const inp=$("session-id-in");
+  const id=(presetId||(inp?inp.value:"")||"").trim();
+  if(!id){ toast("Enter a session ID first - it looks like AC-7K2QX-9M4TD"); if(inp)inp.focus(); return }
+  const __busy=btn?busyBtn(btn,"Restoring session..."):null;
+  try{
+    const r=await api("/api/v1/session/restore",{method:"POST",body:JSON.stringify({save_id:id})});
+    bumpGen(); WS=null; BRIEF_RUN=null; BRIEF_PROMISE=null;
+    await refreshWorkspace(); await refreshDash(); loadSaves();
+    const out=$("save-out");
+    if(out) out.innerHTML=`<div class="msg">Session <b>${esc(r.save_id)}</b> restored - saved ${r.saved_at?esc(String(r.saved_at).slice(0,16).replace("T"," ")+" UTC"):""}, now live in this workspace: ${r.counts.invoices} invoices, ${r.counts.payments} payments, ${r.counts.runs} runs, ${r.counts.matches} matches.</div>`;
+    toast("Session restored exactly as saved");
+  }catch(e){ toast("Retrieve failed: "+e.message) }finally{ if(__busy)__busy() }
+}
+async function loadSaves(){
+  const el=$("saves-list"); if(!el) return;
+  try{
+    const d=await api("/api/v1/session/saves");
+    const rows=(d.saves||[]).slice(0,6);
+    el.innerHTML=rows.length?`<small>Saved sessions on this server:</small>`+rows.map(s=>`<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px"><b class="mono">${esc(s.save_id)}</b><small>${esc(String(s.saved_at||"").slice(0,16).replace("T"," "))} UTC - ${s.counts?s.counts.invoices:0} invoices, ${s.counts?s.counts.payments:0} payments, ${s.counts?s.counts.runs:0} runs${s.label?" - "+esc(s.label):""}</small><button class="btn small ghost" data-sid="${esc(s.save_id)}" onclick="restoreSession(this,this.dataset.sid)">Retrieve</button></div>`).join(""):"<small>No saved sessions yet on this server.</small>";
+  }catch(e){ el.innerHTML=""; }
 }
 let __apprN=0;
 async function loadApprovals(){

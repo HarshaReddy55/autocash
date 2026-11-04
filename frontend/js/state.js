@@ -135,11 +135,20 @@ async function briefOutcome(runId){
       // so a small extra run (one staged wire) adds to the case totals
       // instead of replacing them.
       const runs=await api("/api/v1/runs");
+      const target=runs.find(r=>r.run_id===runId);
+      if(target&&target.status&&target.status!=="COMPLETED"){
+        // A run still executing has only some of its matches written.
+        // An outcome computed now would present a partial run as the
+        // case result - and it would be cached as this run's brief.
+        // Show the wait state and cache nothing.
+        BRIEF_PROMISE=null;
+        return `<div class="d">This run is still executing - the case outcome lands here when it completes.</div>`;
+      }
       const byPay=new Map(), excByPay=new Map();
       // Fetch every run's matches and exceptions in parallel - doing
       // this sequentially cost 20+ round trips and made the brief (and
       // every page waiting on it) look frozen on the small live box.
-      const fetched=await Promise.all([...runs].reverse().slice(-10).map(async run=>{
+      const fetched=await Promise.all([...runs].filter(r=>!r.status||r.status==="COMPLETED").reverse().slice(-10).map(async run=>{
         const [ms,xs]=await Promise.all([api(`/api/v1/runs/${run.run_id}/matches`),api(`/api/v1/runs/${run.run_id}/exceptions`)]);
         return {ms,xs};
       }));
